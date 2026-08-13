@@ -1,0 +1,113 @@
+"""The ``FeatureSource`` protocol and the priority-ordered resolver.
+
+Resolution order per track, stopping at the first hit:
+
+1. Local cache (``audio_features``) — always first, never re-fetched.
+2. Registered sources, ascending ``priority``.
+3. Manual entry — highest trust, never overwritten by an automated source.
+
+Adding a new source is a registration, not a refactor. Nothing above this layer
+knows where a BPM came from.
+"""
+
+from __future__ import annotations
+
+import logging
+import sqlite3
+from typing import Protocol, runtime_checkable
+
+from .. import db
+from ..models import AudioFeatures, Track
+
+log = logging.getLogger(__name__)
+
+# Manual entries win outright; anything automated must have a higher number.
+MANUAL_SOURCE = "manual"
+MANUAL_PRIORITY = 0
+
+
+@runtime_checkable
+class FeatureSource(Protocol):
+    name: str  # written to audio_features.source
+    priority: int  # lower wins when multiple sources have data
+
+    def lookup(self, track: Track) -> AudioFeatures | None: ...
+
+
+class Resolver:
+    """Resolves features for tracks across the registered sources."""
+
+    def __init__(self, sources: list[FeatureSource] | None = None) -> None:
+        self.sources: list[FeatureSource] = sorted(
+            sources or [], key=lambda s: s.priority
+        )
+
+    def register(self, source: FeatureSource) -> None:
+        self.sources.append(source)
+        self.sources.sort(key=lambda s: s.priority)
+
+    # ------------------------------------------------------------------
+    def resolve(self, track: Track) -> tuple[AudioFeatures | None, str | None]:
+        """Try every source in priority order.
+
+        Returns ``(features, failure_reason)``; exactly one is non-None.
+        """
+        if not self.sources:
+            return None, "no sources registered"
+
+        reasons: list[str] = []
+        for source in self.sources:
+            try:
+                found = source.lookup(track)
+            except Exception as exc:  # a broken source must not kill the pass
+                log.warning("source %s raised on %s: %s", source.name, track.title, exc)
+                reasons.append(f"{source.name}: error {exc}")
+                continue
+            if found is not None:
+                return found, None
+            reasons.append(f"{source.name}: no match")
+        return None, "; ".join(reasons)
+
+    # ------------------------------------------------------------------
+    def should_overwrite(
+        self, existing: AudioFeatures | None, candidate_priority: int
+    ) -> bool:
+        """A cached row is replaced only by a strictly higher-trust source."""
+        if existing is None:
+            return True
+        if existing.source == MANUAL_SOURCE:
+            return False
+        existing_priority = self.priority_of(existing.source)
+        if existing_priority is None:
+            return True
+        return candidate_priority < existing_priority
+
+    def priority_of(self, source_name: str) -> int | None:
+        if source_name == MANUAL_SOURCE:
+            return MANUAL_PRIORITY
+        for s in self.sources:
+            if s.name == source_name:
+                return s.priority
+        return None
+
+
+def set_manual_features(
+    conn: sqlite3.Connection,
+    spotify_id: str,
+    bpm: float | None,
+    key_camelot: str | None,
+    energy: float | None = None,
+) -> AudioFeatures:
+    """Write a hand-typed value. Always highest trust."""
+    f = AudioFeatures(
+        spotify_id=spotify_id,
+        bpm=bpm,
+        key_camelot=key_camelot,
+        key_open=None,
+        energy=energy,
+        source=MANUAL_SOURCE,
+        confidence=1.0,
+    )
+    db.upsert_features(conn, f)
+    db.clear_miss(conn, spotify_id)
+    return f

@@ -64,12 +64,24 @@ a missing key costs one track while a wrong key corrupts every transition it
 takes part in. That floor is measured: over 26 analyses the median strength was
 0.64 and only 11.5% fell below it.
 
-**Spotify may no longer return artist genres.** Every artist fetched so far came
-back with an empty `genres` array. If that is a permanent removal, the genre
-filter and Split-by-genre have no data source — the code degrades cleanly
-(everything falls into the `Unknown` bucket and "no filter" remains the default
-path), but the feature would be empty. GetSongBPM's artist search returns genres
-and would be the natural substitute.
+**Spotify may no longer return artist genres — still unresolved.** Every artist
+fetched so far came back with an empty `genres` array, across 600+ artists. Two
+explanations fit that equally well: the field is gone for everyone, or the
+request is wrong. They call for opposite responses, so it should not be acted
+on until it is settled, and it has not been.
+
+If the removal is real, the genre filter and Split-by-genre have no data source.
+The code degrades cleanly — everything falls into the `Unknown` bucket and "no
+filter" remains the default path — but the feature would be empty. GetSongBPM's
+artist search returns genres and is the natural substitute.
+
+Confirming it is blocked on quota. Worth recording precisely, because it is not
+what "rate limited" usually means: **the penalty is scoped per endpoint, not per
+token.** With the same credentials in the same second, `GET /v1/me` answers
+`200` while `GET /v1/artists/{id}` answers `429` with `Retry-After: 32028`
+(~8.9 hours). So a probe against a convenient endpoint proves nothing about the
+one you actually need — check the endpoint in question, and only once, since
+each attempt while penalised appears to extend the window.
 
 ---
 

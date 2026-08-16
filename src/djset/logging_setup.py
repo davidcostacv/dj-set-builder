@@ -10,6 +10,30 @@ from .config import log_path
 _configured = False
 
 
+class _SharedRotatingFileHandler(RotatingFileHandler):
+    """A rotating handler that survives a second process holding the log open.
+
+    Windows takes a mandatory lock on open files, so ``os.replace`` during
+    rollover raises ``PermissionError`` whenever another djset process has the
+    log open. That is not an exotic case — running the UI while a CLI ``enrich``
+    grinds through the library in the background is the intended workflow, and
+    a long pass is exactly what pushes the file past ``maxBytes``.
+
+    Stock behaviour is to print a rollover traceback for *every* subsequent
+    record, which buried the real output of an enrichment run. Losing rotation
+    costs a larger log file; losing the output costs the run's legibility.
+    """
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except OSError:
+            # Keep writing to the current file. Another process will rotate it,
+            # or the next single-process run will.
+            if self.stream is None:
+                self.stream = self._open()
+
+
 def setup_logging(verbose: bool = False) -> None:
     global _configured
     if _configured:
@@ -19,7 +43,7 @@ def setup_logging(verbose: bool = False) -> None:
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
 
-    fh = RotatingFileHandler(
+    fh = _SharedRotatingFileHandler(
         log_path(), maxBytes=2_000_000, backupCount=3, encoding="utf-8"
     )
     fh.setLevel(logging.DEBUG)

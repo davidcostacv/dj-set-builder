@@ -205,7 +205,13 @@ def request(
                 continue
 
         if resp.status_code >= 400:
-            log.error("HTTP %d %s: %s", resp.status_code, url, resp.text[:400])
+            # A 404 is an answer, not a fault. "No such ISRC" and "no analysis
+            # for this recording" are the majority reply from the enrichment
+            # sources, and logging each one at ERROR buries the real failures
+            # under thousands of lines of normal operation. The caller still
+            # gets the exception and can say more if it wants to.
+            level = logging.DEBUG if resp.status_code == 404 else logging.ERROR
+            log.log(level, "HTTP %d %s: %s", resp.status_code, url, resp.text[:400])
             raise HttpError(resp.status_code, url, resp.text)
 
         return resp

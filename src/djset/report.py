@@ -46,25 +46,33 @@ class Coverage:
         return (100.0 * n / self.total_tracks) if self.total_tracks else 0.0
 
     @property
-    def verdict(self) -> str:
+    def readout(self) -> str:
+        """What the coverage means for *using* the app.
+
+        This replaced a PROCEED/TUNE/STOP gate that existed to force a go/no-go
+        on the sequencing engine before it was written. That call was made, the
+        engine ships and produces playlists, so the gate had nothing left to
+        decide — it just kept printing STOP at working software, which is worse
+        than printing nothing.
+
+        What is worth stating instead is the size of the pool the sequencer can
+        actually draw on, since that is the one number that limits every set.
+        """
         if not self.measured:
             return (
-                "NO DATA — nothing has been enriched yet. Run "
-                "`djset enrich --sample 300` first."
+                "No data yet — nothing has been enriched. Run "
+                "`djset enrich --sample 300` to measure, or `djset enrich` for "
+                "the whole library."
             )
-        p = self.pct(self.with_both)
-        if p >= 70:
-            return "PROCEED — coverage is good enough to build the sequencing engine."
-        if p >= 50:
-            return (
-                "TUNE — most misses at this level are matching failures, not missing "
-                "data. Tune the normalizer against the unresolved list and re-run "
-                "before building anything else."
-            )
-        return (
-            "STOP — do not build the sequencing engine on this. Either implement "
-            "RekordboxXMLSource and re-measure, or descope to genre-splitting only."
+        remaining = self.total_tracks - self.measured
+        line = (
+            f"{self.with_both} tracks can be sequenced on BPM and key — "
+            f"{self.pct_of_library(self.with_both):.1f}% of the library, "
+            f"{self.pct(self.with_both):.1f}% of the {self.measured} attempted."
         )
+        if remaining > 0:
+            line += f" {remaining} not yet attempted."
+        return line
 
 
 def build_coverage(conn: sqlite3.Connection, top_n: int = 20) -> Coverage:
@@ -192,7 +200,7 @@ def format_coverage(cov: Coverage) -> str:
         add("")
 
     add("=" * 66)
-    add(f"  VERDICT: {cov.verdict}")
+    add(f"  {cov.readout}")
     add("=" * 66)
     return "\n".join(L)
 
@@ -210,7 +218,8 @@ def coverage_as_json(cov: Coverage) -> str:
             "untagged_tracks": cov.untagged_tracks,
             "unresolved_artists": cov.unresolved_artists,
             "raw_genres": cov.raw_genres,
-            "verdict": cov.verdict,
+            "pct_of_library": round(cov.pct_of_library(cov.with_both), 2),
+            "readout": cov.readout,
         },
         indent=2,
     )

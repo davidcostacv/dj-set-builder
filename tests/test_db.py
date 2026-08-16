@@ -86,7 +86,7 @@ def test_coverage_counts(conn, track_factory):
     assert cov.with_both == 1
     assert cov.pct(cov.with_both) == pytest.approx(33.33, abs=0.01)
     assert cov.by_source["getsongbpm"] == 2
-    assert cov.verdict.startswith("STOP")
+    assert cov.readout.startswith("1 tracks can be sequenced")
     # t2, t3, t4 lack BPM+key, so their artists show up as unresolved.
     assert dict(cov.unresolved_artists)["Artist 2"] == 1
     assert cov.untagged_tracks == 3  # only Artist 1 carries tags

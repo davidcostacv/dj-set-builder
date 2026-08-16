@@ -1,8 +1,9 @@
 """Coverage must be measured over the tracks actually attempted.
 
 Regression: with a 9,759-track library, enriching a 300-track sample and
-dividing by the library size reported ~2% coverage and a bogus STOP verdict.
-The percentage that decides the project has to have the right denominator.
+dividing by the library size reported ~2% coverage — a number that described
+the size of the sample rather than the quality of the data, and nearly got the
+project abandoned on the strength of it.
 """
 
 from __future__ import annotations
@@ -31,7 +32,11 @@ def test_percentages_use_the_measured_set_not_the_library(conn, track_factory):
     assert cov.measured == 10
     assert cov.with_both == 8
     assert cov.pct(cov.with_both) == 80.0
-    assert cov.verdict.startswith("PROCEED")
+    # The readout quotes both denominators, because 80% of 10 attempted and
+    # 0.8% of the library are both true and mean very different things.
+    assert "80.0% of the 10 attempted" in cov.readout
+    assert "0.8% of the library" in cov.readout
+    assert "990 not yet attempted" in cov.readout
 
 
 def test_untouched_tracks_do_not_drag_the_number_down(conn, track_factory):
@@ -43,31 +48,30 @@ def test_untouched_tracks_do_not_drag_the_number_down(conn, track_factory):
     assert cov.pct(cov.with_both) == 100.0
 
 
-def test_nothing_enriched_reports_no_data_rather_than_stop(conn, track_factory):
+def test_nothing_enriched_says_so_rather_than_reporting_zero(conn, track_factory):
     _library(conn, track_factory, 100)
     cov = build_coverage(conn)
     assert cov.measured == 0
     assert cov.pct(cov.with_both) == 0.0
-    assert cov.verdict.startswith("NO DATA")
+    assert cov.readout.startswith("No data yet")
 
 
-def test_verdict_thresholds(conn, track_factory):
+def test_the_readout_reports_the_pool_not_a_build_decision(conn, track_factory):
+    """It used to answer "should I build the sequencing engine?" with
+    PROCEED/TUNE/STOP. The engine ships, so the gate had nothing left to decide
+    and just kept printing STOP at working software. What limits every set is
+    the size of the sequenceable pool, so that is what it says now."""
     _library(conn, track_factory, 10)
-    # 7 of 10 resolved -> exactly the PROCEED boundary.
     for i in range(1, 8):
         db.upsert_features(conn, AudioFeatures(f"t{i}", 128.0, "8A", source="getsongbpm"))
     for i in (8, 9, 10):
         db.record_miss(conn, f"t{i}", "no match")
-    assert build_coverage(conn).verdict.startswith("PROCEED")
 
-
-def test_tune_band(conn, track_factory):
-    _library(conn, track_factory, 10)
-    for i in range(1, 6):
-        db.upsert_features(conn, AudioFeatures(f"t{i}", 128.0, "8A", source="getsongbpm"))
-    for i in range(6, 11):
-        db.record_miss(conn, f"t{i}", "no match")
-    assert build_coverage(conn).verdict.startswith("TUNE")
+    readout = build_coverage(conn).readout
+    assert readout.startswith("7 tracks can be sequenced")
+    assert "not yet attempted" not in readout  # the whole library was attempted
+    for gone in ("PROCEED", "TUNE", "STOP", "VERDICT"):
+        assert gone not in readout
 
 
 def test_partial_features_count_separately(conn, track_factory):

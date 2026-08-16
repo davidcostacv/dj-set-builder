@@ -75,6 +75,16 @@ The code degrades cleanly — everything falls into the `Unknown` bucket and "no
 filter" remains the default path — but the feature would be empty. GetSongBPM's
 artist search returns genres and is the natural substitute.
 
+The pane says which of the three cases it is in rather than just going blank:
+tags not fetched, fetched-and-empty, or fetched-and-empty-so-far with some
+artists still outstanding. That last distinction matters here — an interrupted
+sync left 600 of 4,615 artists fetched, so claiming the other 4,015 are
+untagged would assert something nobody has checked. It says so on the collapsed
+button too, since the pane is collapsed by default and an explanation only
+visible after expanding is one most people never see. Every wording states that
+Generate is unaffected, because a filter that looks broken invites the reader to
+assume it blocks something.
+
 Confirming it is blocked on quota. Worth recording precisely, because it is not
 what "rate limited" usually means: **the penalty is scoped per endpoint, not per
 token.** With the same credentials in the same second, `GET /v1/me` answers

@@ -29,7 +29,7 @@ def qapp():
 def _t(tid: str, dur: int = 210_000) -> Track:
     return Track(
         spotify_id=tid, uri=f"spotify:track:{tid}", title=f"Song {tid}",
-        artist=f"Artist {tid}", duration_ms=dur,
+        artist=f"Artist {tid}", artist_ids=[f"artist-{tid}"], duration_ms=dur,
     )
 
 
@@ -349,3 +349,59 @@ def test_the_button_needs_exactly_one_visible_selected_row(picker_bits):
     _row(picker, "keyless").setSelected(True)
     picker._update_edit_button()
     assert picker.edit_btn.isEnabled() is False
+
+
+# ---------------------------------------------------------------------------
+# the genre pane explains itself instead of going blank
+# ---------------------------------------------------------------------------
+
+
+def test_an_unavailable_genre_pane_says_so_on_the_collapsed_button(window):
+    """The pane is collapsed by default, so an explanation only visible after
+    expanding is one most people would never see."""
+    assert window.genre_toggle.isChecked() is False
+    assert "unavailable" in window.genre_toggle.text().lower()
+
+
+def test_the_notice_replaces_the_checkbox_list(window):
+    """With nothing tagged every track falls into Unknown, so the list would
+    otherwise offer one bucket covering everything — an option that filters
+    nothing while looking like a working filter.
+
+    isHidden() rather than isVisible(): a child of an unshown top-level window
+    is never "visible", so isVisible() would pass here no matter what the code
+    did.
+    """
+    assert window.genre_boxes == []
+    assert window.genre_notice.isHidden() is False
+
+    text = window.genre_notice.text()
+    assert "No genre tags" in text or "not fetched" in text
+    # Both wordings must say the filter is optional; which one appears depends
+    # on whether artists were fetched, and test_genre_availability covers that.
+    assert "Generate" in text
+
+
+def test_the_bulk_buttons_are_disabled_with_nothing_to_select(window):
+    assert window.genre_select_all.isEnabled() is False
+    assert window.genre_clear.isEnabled() is False
+
+
+def test_an_unavailable_pane_still_means_no_filter_not_no_tracks(window):
+    """The distinction the whole design rests on. An empty pane must not
+    quietly become a filter that excludes everything."""
+    assert window.selected_genres() is None
+    assert window.generate_btn.isEnabled() is True
+    assert "no genre filter" in window.eligible_label.text().lower()
+
+
+def test_the_pane_recovers_when_tags_do_show_up(window):
+    """If the artist genres question resolves, nothing needs rewiring."""
+    window._artist_genres = {f"artist-t{i}": ["tech house"] for i in range(3)}
+    window._recompute()
+
+    assert window.genre_notice.isHidden() is True
+    # "tech house" collapses to "house" via the seeded alias table.
+    assert [cb.text().split("  —")[0] for cb in window.genre_boxes] == ["house"]
+    assert window.genre_select_all.isEnabled() is True
+    assert "unavailable" not in window.genre_toggle.text().lower()

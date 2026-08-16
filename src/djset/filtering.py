@@ -139,6 +139,97 @@ class EligibleSummary:
         return f"{base} — of which {self.enriched} have BPM+key"
 
 
+@dataclass(frozen=True)
+class GenreAvailability:
+    """Why the genre pane looks the way it does.
+
+    An empty genre list has three quite different causes, and the pane showing
+    the same blankness for all of them is what makes it read as broken. They
+    are told apart by counting artists rather than tags: an artist row exists
+    once fetched, whether or not Spotify gave it any genres.
+    """
+
+    artists: int  # distinct artists across the pool
+    fetched: int  # of those, how many we hold a row for
+    tagged: int  # of those, how many carry at least one tag
+
+    @property
+    def usable(self) -> bool:
+        return self.tagged > 0
+
+    @property
+    def partial(self) -> bool:
+        """Some artists fetched, some not — the state an interrupted sync leaves."""
+        return 0 < self.fetched < self.artists
+
+    @property
+    def headline(self) -> str | None:
+        """None when the filter works; otherwise the short reason it does not."""
+        if self.artists == 0:
+            return None  # nothing selected yet; there is nothing to explain
+        if self.fetched == 0:
+            return "Genre tags not fetched yet."
+        if self.tagged == 0:
+            # Say what was actually checked. Claiming all N artists are
+            # untagged when only a fraction were ever fetched asserts
+            # something nobody has looked at.
+            if self.partial:
+                return (
+                    f"No genre tags in the {self.fetched} of {self.artists} "
+                    "artists fetched so far."
+                )
+            return f"No genre tags for any of these {self.artists} artists."
+        return None
+
+    @property
+    def detail(self) -> str | None:
+        if self.artists == 0 or self.usable:
+            return None
+
+        unaffected = "Generate is unaffected — it never depends on genre."
+        if self.fetched == 0:
+            return (
+                f"Run Sync to fetch tags for the {self.artists} artists in this "
+                "selection. The genre filter is optional and never gates it, so "
+                "Generate works without them."
+            )
+        if self.partial:
+            return (
+                "Spotify returned an empty tag list for every artist fetched so "
+                f"far, and the other {self.artists - self.fetched} have not been "
+                "fetched — running Sync again would settle it. Whether the field "
+                f"was removed from the API is unconfirmed. {unaffected}"
+            )
+        return (
+            f"Spotify returned an empty tag list for all {self.fetched} artists "
+            "fetched, so there is nothing to filter on. Whether the field was "
+            f"removed from the API is unconfirmed. {unaffected}"
+        )
+
+
+def genre_availability(
+    tracks: list[Track], artist_genres: dict[str, list[str]]
+) -> GenreAvailability:
+    """Count artists three ways so the pane can say which case it is in.
+
+    Deliberately not derived from :func:`genre_index`. When nothing is tagged
+    every track lands in ``UNKNOWN``, so the index reports one healthy-looking
+    bucket covering the whole library — which is exactly the state that needs
+    explaining, not a state that explains itself.
+    """
+    artists: set[str] = set()
+    for t in tracks:
+        artists.update(aid for aid in t.artist_ids if aid)
+
+    fetched = sum(1 for aid in artists if aid in artist_genres)
+    tagged = sum(
+        1
+        for aid in artists
+        if any(g and g.strip() for g in artist_genres.get(aid, ()))
+    )
+    return GenreAvailability(artists=len(artists), fetched=fetched, tagged=tagged)
+
+
 def summarize(
     tracks: list[Track],
     selected: set[str] | None,

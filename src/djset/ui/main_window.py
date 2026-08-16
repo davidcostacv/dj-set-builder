@@ -41,7 +41,13 @@ from .. import db
 from ..config import ConfigError, load_config
 from ..enrichment import ATTRIBUTION_URL, Resolver, default_sources, enrich_tracks
 from ..export import ExportError, export_to_spotify, split_by_genre, update_playlist_order
-from ..filtering import UNKNOWN, filter_tracks, genre_index, summarize
+from ..filtering import (
+    UNKNOWN,
+    filter_tracks,
+    genre_availability,
+    genre_index,
+    summarize,
+)
 from ..models import LIKED_SONGS_ID, LIKED_SONGS_NAME
 from ..sequencing import SequenceMode, SequenceOptions, build_set
 from ..spotify.auth import SpotifyAuth
@@ -157,13 +163,21 @@ class MainWindow(QMainWindow):
         body = QVBoxLayout(self.genre_body)
 
         buttons = QHBoxLayout()
-        select_all = QPushButton("Select all")
-        select_all.clicked.connect(lambda: self._set_all_genres(True))
-        clear = QPushButton("Clear")
-        clear.clicked.connect(lambda: self._set_all_genres(False))
-        buttons.addWidget(select_all)
-        buttons.addWidget(clear)
+        self.genre_select_all = QPushButton("Select all")
+        self.genre_select_all.clicked.connect(lambda: self._set_all_genres(True))
+        self.genre_clear = QPushButton("Clear")
+        self.genre_clear.clicked.connect(lambda: self._set_all_genres(False))
+        buttons.addWidget(self.genre_select_all)
+        buttons.addWidget(self.genre_clear)
         body.addLayout(buttons)
+
+        # Shown in place of the checkbox list when there is nothing to filter
+        # on. Blankness alone reads as a bug; the pane has to say which of the
+        # three causes it is in.
+        self.genre_notice = QLabel()
+        self.genre_notice.setWordWrap(True)
+        self.genre_notice.setVisible(False)
+        body.addWidget(self.genre_notice)
 
         from PySide6.QtWidgets import QScrollArea
 
@@ -374,7 +388,8 @@ class MainWindow(QMainWindow):
 
         # Genre rows are built from the tags present in THIS selection.
         stats = genre_index(pool, self._artist_genres, self._aliases, self._features)
-        self._rebuild_genres(stats)
+        self._genre_availability = genre_availability(pool, self._artist_genres)
+        self._rebuild_genres(stats, self._genre_availability)
 
         summary = summarize(
             pool, self.selected_genres(), self._artist_genres, self._aliases, self._features
@@ -385,7 +400,7 @@ class MainWindow(QMainWindow):
         self.generate_btn.setEnabled(bool(self.selected_sources()))
         self._refresh_name_placeholder()
 
-    def _rebuild_genres(self, stats) -> None:
+    def _rebuild_genres(self, stats, availability=None) -> None:
         previously = {
             cb.text().split("  —")[0]
             for cb in getattr(self, "genre_boxes", [])
@@ -397,6 +412,25 @@ class MainWindow(QMainWindow):
                 item.widget().deleteLater()
 
         self.genre_boxes: list[QCheckBox] = []
+
+        # With nothing tagged, every track falls into Unknown and the list
+        # would offer a single bucket covering the whole library — an option
+        # that filters nothing while looking like a working filter. Say what
+        # happened instead of rendering that.
+        if availability is not None and not availability.usable:
+            self.genre_notice.setText(
+                f"<b>{availability.headline}</b><br>{availability.detail}"
+            )
+            self.genre_notice.setVisible(True)
+            self.genre_select_all.setEnabled(False)
+            self.genre_clear.setEnabled(False)
+            self._refresh_genre_toggle()
+            return
+
+        self.genre_notice.setVisible(False)
+        self.genre_select_all.setEnabled(True)
+        self.genre_clear.setEnabled(True)
+
         for s in stats:
             cb = QCheckBox(f"{s.name}  — {s.track_count} tracks ({s.enriched_count} enriched)")
             if s.name in previously:
@@ -405,9 +439,26 @@ class MainWindow(QMainWindow):
             self.genre_layout.addWidget(cb)
             self.genre_boxes.append(cb)
 
+        self._refresh_genre_toggle()
+
+    def _refresh_genre_toggle(self) -> None:
+        """Say it on the collapsed button too.
+
+        The pane is collapsed by default, so an explanation only visible after
+        expanding is one most people would never see.
+        """
+        availability = getattr(self, "_genre_availability", None)
+        shown = self.genre_toggle.isChecked()
+        if availability is not None and availability.headline:
+            self.genre_toggle.setText(
+                "Genres unavailable ▾" if shown else "Genres unavailable ▸"
+            )
+        else:
+            self.genre_toggle.setText("Hide genres ▾" if shown else "Show genres ▸")
+
     def _on_genre_toggled(self, shown: bool) -> None:
         self.genre_body.setVisible(shown)
-        self.genre_toggle.setText("Hide genres ▾" if shown else "Show genres ▸")
+        self._refresh_genre_toggle()
 
     def _on_genre_changed(self) -> None:
         pool = self._pool()
@@ -657,11 +708,16 @@ class MainWindow(QMainWindow):
             if s.name != UNKNOWN
         }
         if not buckets:
+            # Same three cases as the pane. Telling someone to run Sync when
+            # Sync already ran and came back empty sends them in a circle.
+            avail = genre_availability(pool, self._artist_genres)
             QMessageBox.information(
                 self,
                 "No genres available",
-                "None of the selected tracks carry genre tags, so there is nothing "
-                "to split by. Run “Sync library” to fetch artist genres.",
+                f"{avail.headline}\n\n{avail.detail}"
+                if avail.headline
+                else "None of the selected tracks carry genre tags, so there is "
+                "nothing to split by.",
             )
             return
 

@@ -13,7 +13,7 @@ filter, applied upstream in :mod:`djset.filtering`.
 from __future__ import annotations
 
 import bisect
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from .camelot import parse_camelot
@@ -26,6 +26,12 @@ from .models import AudioFeatures, Track
 
 DEFAULT_TOLERANCE = 0.06
 MIN_TOLERANCE = 0.02
+
+# How far energy must fall before a transition counts as a dip rather than
+# noise. Applied to the percentile energies from `comparable_energy`, so it
+# reads as "more than two percent of the field lower", independent of whatever
+# units the source happened to report in.
+ENERGY_DIP = 0.02
 MAX_TOLERANCE = 0.12
 
 
@@ -375,6 +381,68 @@ class _Beam:
     dips: int  # energy decreases so far
 
 
+def comparable_energy(
+    features: dict[str, AudioFeatures],
+) -> dict[str, AudioFeatures]:
+    """Rewrite ``energy`` as a within-source percentile so deltas mean something.
+
+    Energy is the one field with no universal unit. BPM is beats per minute
+    everywhere and key normalises to Camelot, but every source measures energy
+    its own way: GetSongBPM reports danceability on 0-100, Essentia reports a
+    detrended-fluctuation figure on roughly 0-3, and the two do not describe
+    the same quantity on the same scale even after both are squeezed into 0-1.
+
+    That matters because energy is not merely displayed — a drop of more than
+    ``ENERGY_DIP`` prunes the edge out of the beam search entirely. Mixing raw
+    values from two sources would make every cross-source transition look like
+    a collapse and quietly delete those edges, so the graph would *shrink* as
+    coverage improved. Missing energy is safe (the rule is skipped); wrongly
+    scaled energy is not.
+
+    Ranking within each source removes the scale question rather than trying to
+    calibrate it away: a value becomes "how energetic is this compared with the
+    others measured the same way", which is comparable across sources by
+    construction. Ranks are taken over the pool being sequenced, so energy is
+    relative to the candidates actually in play — which is the only comparison
+    a single set ever needs to make.
+    """
+    by_source: dict[str, list[tuple[float, str]]] = {}
+    for sid, f in features.items():
+        if f.energy is not None:
+            by_source.setdefault(f.source, []).append((f.energy, sid))
+
+    if not by_source:
+        return features
+
+    ranked: dict[str, float] = {}
+    for rows in by_source.values():
+        rows.sort()
+        # A single sample has no distribution to sit in; call it the midpoint
+        # so it neither reads as a peak nor as a trough.
+        if len(rows) == 1:
+            ranked[rows[0][1]] = 0.5
+            continue
+        last = len(rows) - 1
+        # Tied values must share a rank. GetSongBPM's danceability is integer
+        # derived, so ties are common — spreading them over distinct ranks
+        # would manufacture energy differences between tracks the source
+        # called identical, and those fake dips would prune real edges.
+        i = 0
+        while i < len(rows):
+            j = i
+            while j + 1 < len(rows) and rows[j + 1][0] == rows[i][0]:
+                j += 1
+            midrank = ((i + j) / 2.0) / last
+            for k in range(i, j + 1):
+                ranked[rows[k][1]] = midrank
+            i = j + 1
+
+    return {
+        sid: (replace(f, energy=ranked[sid]) if sid in ranked else f)
+        for sid, f in features.items()
+    }
+
+
 def build_set(
     tracks: list[Track],
     features: dict[str, AudioFeatures],
@@ -388,6 +456,7 @@ def build_set(
     # own Spotify id — so per-id uniqueness is not enough to stop a set playing
     # the same song twice.
     tracks = dedupe_recordings(tracks)
+    features = comparable_energy(features)
     graph = TrackGraph(tracks, features, opts)
     target = _target_length(graph, opts)
 
@@ -422,7 +491,7 @@ def build_set(
                     if j in beam.used:
                         continue
                     dips = beam.dips
-                    if tr.energy_delta is not None and tr.energy_delta < -0.02:
+                    if tr.energy_delta is not None and tr.energy_delta < -ENERGY_DIP:
                         # Prefer a gentle upward arc; allow one dip, and only
                         # once the set is into its back third.
                         in_back_third = len(beam.path) >= (2 * target) // 3

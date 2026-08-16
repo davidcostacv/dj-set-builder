@@ -56,6 +56,9 @@ USER_AGENT = "dj-set-builder/0.1 ( https://github.com/davidcostacv/dj-set-builde
 # Essentia's self-reported confidence in the key estimate, 0..1.
 MIN_KEY_STRENGTH = 0.5
 
+# Upper bound of Essentia's danceability, used only to fit the 0..1 column.
+DANCEABILITY_MAX = 3.0
+
 # One ISRC can map to several recording MBIDs (the same recording appearing on
 # multiple releases). Only a few are worth trying before giving up.
 MAX_MBIDS = 3
@@ -141,7 +144,7 @@ class AcousticBrainzSource:
             bpm=round(bpm, 2),
             key_camelot=key_camelot,
             key_open=None,
-            energy=None,
+            energy=_danceability(rhythm.get("danceability")),
             source=self.name,
             # Exact ISRC join, estimated values. Below GetSongBPM's curated
             # numbers, above a fuzzy-matched result.
@@ -192,6 +195,24 @@ def _key_name(tonal: dict[str, Any]) -> str | None:
         if isinstance(note, str) and isinstance(scale, str) and note and scale:
             return f"{note} {scale}"
     return None
+
+
+def _danceability(value: Any) -> float | None:
+    """Essentia's danceability, squeezed into the 0..1 the schema expects.
+
+    Its detrended-fluctuation figure runs to roughly 3, and observed values on
+    this library sit around 1.15-1.40 — so the scale genuinely differs from
+    GetSongBPM's danceability/100, which lands nearer 0.60-0.80 for the same
+    kind of music. Dividing by :data:`DANCEABILITY_MAX` keeps the column
+    honest but does *not* make the two comparable; only the per-source ranking
+    in ``sequencing.comparable_energy`` does that. Writing this value without
+    that ranking in place would make every cross-source transition look like a
+    collapse and prune it out of the graph.
+    """
+    f = _as_float(value)
+    if f is None or f < 0:
+        return None
+    return min(1.0, f / DANCEABILITY_MAX)
 
 
 def _as_float(value: Any) -> float | None:

@@ -14,26 +14,37 @@ Stack: Python 3.11+, PySide6, SQLite, `httpx`, and
 
 ---
 
-## Status — stopped at the build-order step 3 checkpoint
+## Status
 
-The brief says: *"Do not open a Qt window until step 7. Stop after step 3 and
-show me the coverage report."* That is exactly where this is.
+All nine build-order steps are implemented. **283 tests, no network calls.**
 
 | Step | | |
 |---|---|---|
 | 1 | Auth + token persistence + `/me` smoke test | done |
 | 2 | Playlist sync into SQLite (respects `snapshot_id`) | done |
-| 3 | `FeatureSource` protocol + `GetSongBPMSource` + normalizer + coverage CLI | done — **awaiting `GETSONGBPM_API_KEY`** |
-| 4 | Genre filter logic + alias collapsing | not started |
-| 5 | Camelot conversion + sequencing engine | conversion done, engine gated on step 3 |
-| 6 | Playlist creation + idempotency guard | not started |
-| 7 | PySide6 UI | not started |
-| 8 | Split by genre | not started |
-| 9 | PyInstaller packaging | not started |
+| 3 | `FeatureSource` protocol + `GetSongBPMSource` + normalizer + coverage CLI | done |
+| 4 | Genre filter logic + alias collapsing | done |
+| 5 | Camelot conversion + sequencing engine | done |
+| 6 | Playlist creation + idempotency guard | done |
+| 7 | PySide6 UI, panes 1→4 | done |
+| 8 | Split by genre | done |
+| 9 | PyInstaller packaging | done |
 
-Camelot conversion landed early because `audio_features.key_camelot` has to be
-populated at enrichment time. The sequencing engine that consumes it is
-deliberately not built yet.
+### Known limitations, measured rather than assumed
+
+**Enrichment coverage is ~29%.** GetSongBPM's catalogue is thin on post-2015
+hip-hop, reggaetón and Latin pop. This was verified, not guessed: ten missed
+tracks by well-known artists were re-queried under every search formulation the
+API supports and none were recoverable, while the artists themselves *are*
+present. Tracks without BPM and key can still be filtered and split; they just
+cannot take part in harmonic sequencing.
+
+**Spotify may no longer return artist genres.** Every artist fetched so far came
+back with an empty `genres` array. If that is a permanent removal, the genre
+filter and Split-by-genre have no data source — the code degrades cleanly
+(everything falls into the `Unknown` bucket and "no filter" remains the default
+path), but the feature would be empty. GetSongBPM's artist search returns genres
+and would be the natural substitute.
 
 ---
 
@@ -56,11 +67,42 @@ Fill in `.env`:
 Then:
 
 ```bash
-djset login
-djset report
+djset login      # authorize once
+djset sync       # pull playlists into SQLite
+djset enrich     # fill BPM/key (long; Ctrl+C is safe, it resumes)
+djset ui         # open the window
 ```
 
-`report` = sync + enrich + coverage. It is the step-3 gate.
+---
+
+## Using it
+
+**The window.** Panes run left to right: pick sources, optionally filter by
+genre, set the mode and length, press **Generate & Save to Spotify**. That one
+button sequences the set *and* creates the playlist in your account — there is
+no separate export step. The result pane shows the link plus the ordered table,
+which you can drag to reorder; **Update playlist** pushes edits back.
+
+**From the CLI**, the same flow without the window:
+
+```bash
+djset generate --mode bpm+key --tracks 24 --dry-run
+```
+
+Drop `--dry-run` to create the playlist for real.
+
+---
+
+## Packaging
+
+```bash
+pyinstaller packaging/djset.spec --noconfirm
+```
+
+Produces `dist/djset/djset.exe`. One-folder rather than one-file: a one-file
+build unpacks Qt to a temp directory on every launch, which is slow and trips
+some antivirus. The database lives in the OS app-data directory, so the program
+folder stays read-only and portable.
 
 ---
 
@@ -73,8 +115,12 @@ djset report
 | `djset sources` | list playlists + Liked Songs |
 | `djset sync` | pull playlists and artist genres into SQLite |
 | `djset enrich` | fill BPM/key from GetSongBPM. `--sample N` for a representative random sample (use this to measure coverage); `--limit N` takes the first N in storage order and is biased |
+| `djset artists` | fetch artist genres only (slow: one request per artist) |
 | `djset coverage` | print the coverage report (`--json` for machine-readable) |
 | `djset report` | sync + enrich + coverage in one go |
+| `djset generate` | sequence a set and create the playlist (`--dry-run` to preview) |
+| `djset exports` | list playlists this app has created in your account |
+| `djset ui` | open the desktop window |
 | `djset doctor` | probe the live API against the build brief and report drift |
 | `djset manual <id> --bpm 128 --key 8A` | hand-enter a straggler; highest trust |
 | `djset about` | paths and the required GetSongBPM attribution |

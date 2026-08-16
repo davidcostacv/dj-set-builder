@@ -72,14 +72,23 @@ class Resolver:
     def should_overwrite(
         self, existing: AudioFeatures | None, candidate_priority: int
     ) -> bool:
-        """A cached row is replaced only by a strictly higher-trust source."""
+        """A cached row is replaced only by a *provably* higher-trust source.
+
+        The unknown case has to fail closed. If the source that wrote the
+        cached row is not registered right now — because it was disabled for
+        this run, say — its priority is unknowable, and "unknown" is not
+        evidence that the candidate is better. Treating it as replaceable meant
+        ``djset enrich --no-getsongbpm --refresh`` would let a BPM-only Deezer
+        row silently overwrite a GetSongBPM row that carried a key, quietly
+        destroying harmonic data by way of a flag that reads as read-only.
+        """
         if existing is None:
             return True
         if existing.source == MANUAL_SOURCE:
             return False
         existing_priority = self.priority_of(existing.source)
         if existing_priority is None:
-            return True
+            return False
         return candidate_priority < existing_priority
 
     def priority_of(self, source_name: str) -> int | None:

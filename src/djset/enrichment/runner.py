@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from .. import db
-from ..models import Track
+from ..models import AudioFeatures, Track
 from .base import Resolver
 
 log = logging.getLogger(__name__)
@@ -36,6 +36,25 @@ def _noop(done: int, total: int, label: str) -> None:
         log.info("  enrichment %d/%d — %s", done, total, label)
 
 
+def _would_lose_the_key(
+    candidate: "AudioFeatures", existing: "AudioFeatures | None"
+) -> bool:
+    """Whether writing ``candidate`` would erase a key already on file.
+
+    Priority settles whose *tempo* to believe, but outranking another source
+    does not imply having more to say. Deezer carries no harmonic data at all,
+    and AcousticBrainz deliberately drops its own low-confidence estimates — so
+    a higher-trust row can still be silent on key. Overwriting with that
+    silence would turn a sequenceable track into an unsequenceable one, which
+    is a strictly worse library for a marginally better BPM.
+    """
+    return (
+        existing is not None
+        and existing.key_camelot is not None
+        and candidate.key_camelot is None
+    )
+
+
 def enrich_tracks(
     conn: sqlite3.Connection,
     resolver: Resolver,
@@ -45,21 +64,31 @@ def enrich_tracks(
     progress: Progress = _noop,
     commit_every: int = 10,
     refresh: bool = False,
+    retry_misses: bool = False,
 ) -> EnrichmentStats:
     """Resolve features for tracks that do not have them yet.
 
     A track with *any* cached features is skipped, not just a complete one.
     Some sources are partial by nature — Deezer supplies tempo but no key — so
     treating a BPM-only row as unfinished would re-query every source for it on
-    every run, forever, for no gain. ``refresh=True`` re-attempts everything,
-    including tracks that previously hit the retry ceiling; that is the switch
-    to pull after adding a new source.
+    every run, forever, for no gain.
+
+    Two ways to widen that:
+
+    ``retry_misses`` keeps every cached hit but ignores the retry ceiling, so
+    tracks that failed before are asked again. That is the switch to pull after
+    registering a new source: the misses are exactly the population the new
+    source exists to serve, and re-confirming thousands of known answers would
+    cost hours for nothing.
+
+    ``refresh`` re-attempts *everything*, cached hits included. Only useful
+    when an existing source's data is itself suspect.
     """
     items = tracks if tracks is not None else db.all_tracks(conn)
     stats = EnrichmentStats(considered=len(items))
 
     cached = db.all_features(conn)
-    exhausted = set() if refresh else db.exhausted_ids(conn)
+    exhausted = set() if (refresh or retry_misses) else db.exhausted_ids(conn)
 
     pending = []
     for t in items:
@@ -83,8 +112,10 @@ def enrich_tracks(
         if features is not None:
             existing = cached.get(track.spotify_id)
             candidate_priority = resolver.priority_of(features.source)
-            if candidate_priority is None or resolver.should_overwrite(
-                existing, candidate_priority
+            if (
+                candidate_priority is not None
+                and resolver.should_overwrite(existing, candidate_priority)
+                and not _would_lose_the_key(features, existing)
             ):
                 db.upsert_features(conn, features)
             db.clear_miss(conn, track.spotify_id)

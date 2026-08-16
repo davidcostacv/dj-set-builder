@@ -143,7 +143,12 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         print("(Ctrl+C is safe — every result is committed as it lands.)\n")
         try:
             stats = enrich_tracks(
-                conn, resolver, tracks, progress=_enrich_progress, refresh=args.refresh
+                conn,
+                resolver,
+                tracks,
+                progress=_enrich_progress,
+                refresh=args.refresh,
+                retry_misses=args.retry_misses,
             )
         except KeyboardInterrupt:
             conn.commit()
@@ -467,8 +472,14 @@ def _add_enrich_args(sp: argparse.ArgumentParser) -> None:
     sp.add_argument(
         "--refresh",
         action="store_true",
-        help="re-attempt tracks that already have features or hit the retry "
-        "ceiling — use after adding a new source",
+        help="re-attempt everything, cached hits included — only useful when an "
+        "existing source's data is itself suspect",
+    )
+    sp.add_argument(
+        "--retry-misses",
+        action="store_true",
+        help="re-attempt tracks that failed before, keeping cached hits — this "
+        "is the flag to use after registering a new source",
     )
     sp.add_argument("--no-deezer", action="store_true", help="disable the Deezer source")
     sp.add_argument(

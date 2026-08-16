@@ -22,6 +22,12 @@ DEFAULT_TIMEOUT = httpx.Timeout(20.0, connect=10.0)
 MAX_ATTEMPTS = 5
 RETRY_STATUS = {429, 500, 502, 503, 504}
 
+# Longest we will ever block inside a retry. Spotify can answer a 429 with a
+# Retry-After of many hours when an app exceeds its quota; sleeping that out
+# would wedge a CLI run — or a Qt worker thread — for a day. Past this, the
+# request fails with RateLimited so the caller can surface a real message.
+MAX_RETRY_SLEEP_S = 120.0
+
 _client: httpx.Client | None = None
 _client_lock = threading.Lock()
 
@@ -110,6 +116,29 @@ class HttpError(RuntimeError):
         self.body = body
 
 
+class RateLimited(HttpError):
+    """A 429 whose Retry-After is too long to wait out inline."""
+
+    def __init__(self, url: str, retry_after: float, body: str = "") -> None:
+        super().__init__(429, url, body)
+        self.retry_after = retry_after
+
+    def human_delay(self) -> str:
+        s = self.retry_after
+        if s >= 3600:
+            return f"{s / 3600:.1f} hours"
+        if s >= 60:
+            return f"{s / 60:.0f} minutes"
+        return f"{s:.0f} seconds"
+
+    def __str__(self) -> str:
+        return (
+            f"Rate limited by the API. It asked us to wait {self.human_delay()} "
+            f"before retrying ({self.url}). Nothing was lost — cached progress is "
+            "committed, so re-running later resumes where this stopped."
+        )
+
+
 def request(
     method: str,
     url: str,
@@ -154,15 +183,26 @@ def request(
             hdrs.update(on_unauthorized())
             continue
 
-        if resp.status_code in RETRY_STATUS and attempt < MAX_ATTEMPTS:
+        if resp.status_code in RETRY_STATUS:
             wait = _retry_after_seconds(resp)
-            delay = (wait + 1.0) if wait is not None else _backoff(attempt)
-            log.warning(
-                "HTTP %d %s — retry %d/%d in %.1fs",
-                resp.status_code, url, attempt, MAX_ATTEMPTS, delay,
-            )
-            time.sleep(delay)
-            continue
+
+            # A long Retry-After is an answer, not a hiccup: stop and report it
+            # rather than blocking for hours.
+            if wait is not None and wait > MAX_RETRY_SLEEP_S:
+                log.error(
+                    "Rate limited on %s — Retry-After %.0fs exceeds the %.0fs cap",
+                    url, wait, MAX_RETRY_SLEEP_S,
+                )
+                raise RateLimited(url, wait, resp.text)
+
+            if attempt < MAX_ATTEMPTS:
+                delay = (wait + 1.0) if wait is not None else _backoff(attempt)
+                log.warning(
+                    "HTTP %d %s — retry %d/%d in %.1fs",
+                    resp.status_code, url, attempt, MAX_ATTEMPTS, delay,
+                )
+                time.sleep(delay)
+                continue
 
         if resp.status_code >= 400:
             log.error("HTTP %d %s: %s", resp.status_code, url, resp.text[:400])

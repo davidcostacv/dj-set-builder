@@ -38,8 +38,10 @@ _ARTIST_ARTICLE_RE = re.compile(r"^(the|los|las|les|die)\s+", re.IGNORECASE)
 _PUNCT_RE = re.compile(r"[^\w\s]", re.UNICODE)
 _WS_RE = re.compile(r"\s+")
 
-# Artist strings arrive as "A, B & C"; the join key is the primary artist.
-_ARTIST_SPLIT_RE = re.compile(r"\s*(?:,|;|&|\+|/|\bx\b|\band\b|\bvs\.?\b|\bwith\b)\s*", re.IGNORECASE)
+# NOTE: there is deliberately no artist-splitting regex here. Callers pass a
+# single artist name taken from Spotify's artists array (Track.primary_artist),
+# so splitting on "," / "&" would corrupt names that legitimately contain them
+# — "Tyler, The Creator" became "Tyler", and "Above & Beyond" became "Above".
 
 
 def _fold(s: str) -> str:
@@ -51,6 +53,13 @@ def _fold(s: str) -> str:
     s = s.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
     s = s.replace("–", "-").replace("—", "-").replace("‐", "-")
     s = s.replace("'", "")
+    # Stylised letters: "Joey Bada$$" -> "joey badass", "$uicideboy$" ->
+    # "suicideboys", "A$AP" -> "asap". Runs are substituted whole, and only
+    # when the run touches a letter, so a currency amount ("$100") is still
+    # treated as punctuation. Trailing-side first, then leading-side.
+    _s_run = lambda m: "s" * len(m.group())  # noqa: E731
+    s = re.sub(r"(?<=[A-Za-z])\$+", _s_run, s)
+    s = re.sub(r"\$+(?=[A-Za-z])", _s_run, s)
     s = unicodedata.normalize("NFKD", s)
     s = "".join(c for c in s if not unicodedata.combining(c))
     return s.lower()
@@ -110,12 +119,13 @@ def title_variants(title: str) -> list[str]:
 
 
 def primary_artist(artist: str) -> str:
-    """First credited artist — the one a lookup index is most likely to hold."""
+    """Canonical form of a single artist name, articles kept.
+
+    Expects one artist, not a joined credit list — see ``Track.primary_artist``.
+    """
     s = _strip_credits(_fold(artist))
     s = _BRACKETED_RE.sub(" ", s)
-    parts = [p for p in _ARTIST_SPLIT_RE.split(s) if p.strip()]
-    head = parts[0] if parts else s
-    return _clean(head, strip_articles=False)
+    return _clean(s, strip_articles=False)
 
 
 def normalize_artist(artist: str) -> str:

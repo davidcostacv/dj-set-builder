@@ -65,18 +65,21 @@ def test_title_variants_collapse_when_nothing_to_strip():
     "raw,expected",
     [
         ("Daft Punk", "daft punk"),
-        ("Calvin Harris, Dua Lipa", "calvin harris"),
-        ("Jack Ü & Justin Bieber", "jack u"),
-        ("Above & Beyond", "above"),  # known cost of splitting on '&'
         ("Tiësto", "tiesto"),
         ("The Chemical Brothers", "chemical brothers"),
-        ("A$AP Rocky", "a ap rocky"),
         ("Bad Bunny feat. Drake", "bad bunny"),
-        ("deadmau5 vs. Kaskade", "deadmau5"),
         ("Rüfüs Du Sol", "rufus du sol"),
+        # Names containing '&' or ',' are single artists and must stay whole.
+        # These used to truncate to "above" / "earth", which never matched.
+        ("Above & Beyond", "above beyond"),
+        ("Earth, Wind & Fire", "earth wind fire"),
+        ("Tyler, The Creator", "tyler the creator"),
+        ("A$AP Rocky", "asap rocky"),
     ],
 )
 def test_normalize_artist(raw, expected):
+    """Input is ONE artist name, from Spotify's artists array — never a joined
+    credit list. See tests/test_primary_artist.py for how that list is split."""
     assert normalize_artist(raw) == expected
 
 
@@ -88,6 +91,11 @@ def test_primary_artist_keeps_leading_article():
 def test_artist_variants_dedupe():
     assert artist_variants("Daft Punk") == ["daft punk"]
     assert artist_variants("The Weeknd") == ["the weeknd", "weeknd"]
+
+
+def test_multi_artist_strings_are_not_split_here():
+    """Splitting is the caller's job, via Track.artist_names."""
+    assert normalize_artist("Calvin Harris, Dua Lipa") == "calvin harris dua lipa"
 
 
 def test_match_key_is_stable_across_spellings():

@@ -15,6 +15,9 @@ from .models import AudioFeatures, Track
 
 SCHEMA = Path(__file__).with_name("schema.sql")
 
+# How long to block waiting for another writer before giving up.
+BUSY_TIMEOUT_S = 30.0
+
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -23,12 +26,31 @@ def utcnow() -> str:
 def connect(path: Path | None = None) -> sqlite3.Connection:
     p = path or db_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(p, timeout=30)
+    conn = sqlite3.connect(p, timeout=BUSY_TIMEOUT_S)
     conn.row_factory = sqlite3.Row
+    # Wait for a competing writer rather than failing instantly. Two processes
+    # (or the Qt main thread and its worker) touching the DB at once is normal,
+    # not exceptional: a long enrichment pass holds the write lock in bursts.
+    conn.execute(f"PRAGMA busy_timeout = {int(BUSY_TIMEOUT_S * 1000)}")
     conn.executescript(SCHEMA.read_text(encoding="utf-8"))
+    _migrate(conn)
     _seed_genre_aliases(conn)
     conn.commit()
     return conn
+
+
+# Columns added after the first release. CREATE TABLE IF NOT EXISTS will not
+# add them to a database that already exists, so they are applied explicitly.
+_ADDED_COLUMNS: list[tuple[str, str, str]] = [
+    ("tracks", "artist_names", "TEXT"),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, decl in _ADDED_COLUMNS:
+        existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 @contextmanager
@@ -50,13 +72,13 @@ def upsert_track(conn: sqlite3.Connection, t: Track) -> None:
     conn.execute(
         """
         INSERT INTO tracks (spotify_id, uri, isrc, title, artist, artist_ids,
-                            album, duration_ms, added_at)
-        VALUES (?,?,?,?,?,?,?,?,?)
+                            artist_names, album, duration_ms, added_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(spotify_id) DO UPDATE SET
           uri=excluded.uri, isrc=COALESCE(excluded.isrc, tracks.isrc),
           title=excluded.title, artist=excluded.artist,
-          artist_ids=excluded.artist_ids, album=excluded.album,
-          duration_ms=excluded.duration_ms
+          artist_ids=excluded.artist_ids, artist_names=excluded.artist_names,
+          album=excluded.album, duration_ms=excluded.duration_ms
         """,
         (
             t.spotify_id,
@@ -65,6 +87,7 @@ def upsert_track(conn: sqlite3.Connection, t: Track) -> None:
             t.title,
             t.artist,
             json.dumps(t.artist_ids),
+            json.dumps(t.artist_names),
             t.album,
             t.duration_ms,
             t.added_at,
@@ -73,12 +96,21 @@ def upsert_track(conn: sqlite3.Connection, t: Track) -> None:
 
 
 def _row_to_track(r: sqlite3.Row) -> Track:
+    keys = r.keys()
+    raw_names = r["artist_names"] if "artist_names" in keys else None
+    # Rows written before artist_names existed fall back to splitting the
+    # display string — lossy for names containing a comma, but only until the
+    # next sync rewrites the row.
+    names = json.loads(raw_names) if raw_names else [
+        p.strip() for p in (r["artist"] or "").split(",") if p.strip()
+    ]
     return Track(
         spotify_id=r["spotify_id"],
         uri=r["uri"],
         title=r["title"],
         artist=r["artist"],
         artist_ids=json.loads(r["artist_ids"] or "[]"),
+        artist_names=names,
         isrc=r["isrc"],
         album=r["album"],
         duration_ms=r["duration_ms"],
@@ -307,6 +339,37 @@ def cached_playlists(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 # --------------------------------------------------------------------------
+# exports
+# --------------------------------------------------------------------------
+
+
+def find_export(conn: sqlite3.Connection, content_hash: str) -> sqlite3.Row | None:
+    """Look up a previous export by its ordered-URI hash — the idempotency guard."""
+    return conn.execute(
+        "SELECT * FROM exports WHERE content_hash = ?", (content_hash,)
+    ).fetchone()
+
+
+def record_export(
+    conn: sqlite3.Connection, playlist_id: str, content_hash: str, name: str
+) -> None:
+    """Log a creation so the user can see what the app put in their account."""
+    conn.execute(
+        """
+        INSERT INTO exports (playlist_id, content_hash, name, created_at)
+        VALUES (?,?,?,?)
+        ON CONFLICT(content_hash) DO UPDATE SET
+          playlist_id=excluded.playlist_id, name=excluded.name
+        """,
+        (playlist_id, content_hash, name, utcnow()),
+    )
+
+
+def all_exports(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return list(conn.execute("SELECT * FROM exports ORDER BY created_at DESC"))
+
+
+# --------------------------------------------------------------------------
 # genre aliases
 # --------------------------------------------------------------------------
 
@@ -369,6 +432,16 @@ SEED_ALIASES: dict[str, str] = {
 
 
 def _seed_genre_aliases(conn: sqlite3.Connection) -> None:
+    """Seed the alias table once, on first use.
+
+    Guarded by a read so that merely opening the database does not take a write
+    lock — otherwise every connection contends with a running enrichment pass.
+    Only seeding when empty is also what preserves the user's edits: a row they
+    deleted is not silently resurrected on the next open.
+    """
+    already = conn.execute("SELECT 1 FROM genre_aliases LIMIT 1").fetchone()
+    if already:
+        return
     conn.executemany(
         "INSERT OR IGNORE INTO genre_aliases (raw, canonical) VALUES (?,?)",
         list(SEED_ALIASES.items()),

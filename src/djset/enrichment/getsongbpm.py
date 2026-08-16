@@ -47,14 +47,26 @@ class GetSongBPMSource:
 
     # ------------------------------------------------------------------
     def lookup(self, track: Track) -> AudioFeatures | None:
-        for artist in artist_variants(track.artist):
+        # Use the structured primary artist, not the joined display string:
+        # splitting "Tyler, The Creator" on commas yields "Tyler".
+        for attempt, artist in enumerate(artist_variants(track.primary_artist)):
+            saw_any_rows = False
             for title in title_variants(track.title):
-                hit = self._search_one(artist, title, track)
+                hit, had_rows = self._search_one(artist, title, track)
+                saw_any_rows = saw_any_rows or had_rows
                 if hit is None:
                     continue
                 features = self._to_features(track, hit)
                 if features is not None:
                     return features
+
+            # If the first artist spelling returned no rows at all across every
+            # title variant, the catalogue simply does not have this artist —
+            # a second spelling will not conjure it. Skipping that costs no
+            # coverage and halves the request budget for a miss, which matters
+            # when ~70% of a large library misses.
+            if attempt == 0 and not saw_any_rows:
+                break
         return None
 
     # ------------------------------------------------------------------
@@ -77,19 +89,25 @@ class GetSongBPMSource:
 
     def _search_one(
         self, artist: str, title: str, track: Track
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Returns ``(best_match, saw_any_rows)``.
+
+        ``saw_any_rows`` distinguishes "the search returned candidates but none
+        matched well enough" from "the catalogue has nothing here at all" —
+        only the latter justifies abandoning further variants.
+        """
         payload = self._get(
             "/search/", type="both", lookup=f"song:{title} artist:{artist}"
         )
         if not payload:
-            return None
+            return None, False
 
         results = _extract_results(payload)
         if not results:
-            return None
+            return None, False
 
         want_title = normalize_title(track.title)
-        want_artist = normalize_artist(track.artist)
+        want_artist = normalize_artist(track.primary_artist)
 
         best: tuple[float, dict[str, Any]] | None = None
         for r in results:
@@ -105,7 +123,7 @@ class GetSongBPMSource:
             if best is None or score > best[0]:
                 best = (score, r)
 
-        return best[1] if best else None
+        return (best[1] if best else None), True
 
     # ------------------------------------------------------------------
     def _to_features(

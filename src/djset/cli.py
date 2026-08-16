@@ -92,6 +92,23 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_artists(args: argparse.Namespace) -> int:
+    """Fetch artist genres only — the genre filter's data source.
+
+    Separate from `sync` because it is the slow half (one request per artist,
+    the batch endpoint having been removed) and playlists rarely need re-reading
+    at the same time.
+    """
+    client = _client()
+    with db.session() as conn:
+        done = sync_artists(conn, client, force=args.force, progress=print)
+        tagged = sum(1 for g in db.artist_genres(conn).values() if g)
+        total = len(db.artist_genres(conn))
+    print(f"\n{done} artist(s) fetched this run.")
+    print(f"{tagged}/{total} cached artists carry at least one genre tag.")
+    return 0
+
+
 def cmd_enrich(args: argparse.Namespace) -> int:
     cfg = load_config(require_getsongbpm=True)
     resolver = Resolver([GetSongBPMSource(cfg.getsongbpm_api_key, cfg.getsongbpm_rate_per_hour)])
@@ -153,6 +170,108 @@ def cmd_report(args: argparse.Namespace) -> int:
     return cmd_coverage(args)
 
 
+def cmd_generate(args: argparse.Namespace) -> int:
+    """Sequence a set and create the playlist — the whole of Generate."""
+    from .export import ExportError, export_to_spotify
+    from .filtering import filter_tracks, summarize
+    from .sequencing import SequenceMode, SequenceOptions, build_set
+
+    mode = SequenceMode(args.mode)
+    with db.session() as conn:
+        pool = (
+            db.tracks_in_playlists(conn, args.playlist)
+            if args.playlist
+            else db.all_tracks(conn)
+        )
+        if not pool:
+            print("No tracks. Run `djset sync` first.")
+            return 1
+
+        genres = set(args.genre) if args.genre else None
+        artist_genres = db.artist_genres(conn)
+        aliases = db.genre_aliases(conn)
+        features = db.all_features(conn)
+
+        eligible = filter_tracks(pool, genres, artist_genres, aliases)
+        summary = summarize(pool, genres, artist_genres, aliases, features)
+        print(f"Pool: {len(pool)} tracks. {summary.label}")
+
+        opts = SequenceOptions(
+            mode=mode,
+            tolerance=args.tolerance,
+            half_double=not args.no_half_double,
+            energy_boost=args.energy_boost,
+            target_tracks=args.tracks,
+            target_minutes=args.minutes,
+            start_track_id=args.start_track,
+        )
+        result = build_set(
+            eligible, features, opts, eligible_before_filter=len(pool)
+        )
+        print(f"\n{result.explain()}\n")
+        if not result.tracks:
+            return 1
+
+        for i, t in enumerate(result.tracks, 1):
+            f = features.get(t.spotify_id)
+            bpm = f"{f.bpm:.0f}" if f and f.bpm else "—"
+            key = (f.key_camelot if f else None) or "—"
+            arrow = ""
+            if i <= len(result.transitions):
+                arrow = f"   -> {result.transitions[i - 1].label}"
+            print(f"  {i:>3}. {bpm:>4} {key:<4} {t.artist[:26]:26} {t.title[:32]:32}{arrow}")
+
+        if args.dry_run:
+            print("\n--dry-run: nothing was created in your account.")
+            return 0
+
+        name = args.name or _default_name(genres, mode, len(result.tracks))
+        try:
+            export = export_to_spotify(
+                conn,
+                _client(),
+                name,
+                result.tracks,
+                description=f"{mode.value} · {len(result.tracks)} tracks · built with djset",
+                public=args.public,
+                progress=print,
+            )
+        except ExportError as exc:
+            print(f"\nExport failed: {exc}")
+            return 1
+
+        print(f"\n{export.message}")
+        print(f"\n  {export.url}\n")
+    return 0
+
+
+def _default_name(genres, mode, n: int) -> str:
+    """Prefilled name, e.g. 'House · BPM+Key · 24 tracks'."""
+    parts = []
+    if genres:
+        parts.append(" / ".join(sorted(g.title() for g in genres)))
+    parts.append(mode.value.upper())
+    parts.append(f"{n} tracks")
+    return " · ".join(parts)
+
+
+def cmd_ui(args: argparse.Namespace) -> int:
+    from .ui import run
+
+    return run()
+
+
+def cmd_exports(args: argparse.Namespace) -> int:
+    with db.session() as conn:
+        rows = db.all_exports(conn)
+    if not rows:
+        print("Nothing created yet.")
+        return 0
+    for r in rows:
+        print(f"{r['created_at']}  {r['playlist_id']:<24} {r['name']}")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from .doctor import format_probes, run_doctor
 
@@ -207,6 +326,10 @@ def build_parser() -> argparse.ArgumentParser:
     _add_sync_args(sp)
     sp.set_defaults(func=cmd_sync)
 
+    sp = sub.add_parser("artists", help="fetch artist genres only (slow: 1 req/artist)")
+    sp.add_argument("--force", action="store_true", help="re-fetch already-cached artists")
+    sp.set_defaults(func=cmd_artists)
+
     sp = sub.add_parser("enrich", help="fill BPM/key from GetSongBPM")
     _add_enrich_args(sp)
     sp.set_defaults(func=cmd_enrich)
@@ -220,6 +343,27 @@ def build_parser() -> argparse.ArgumentParser:
     _add_enrich_args(sp)
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_report)
+
+    sp = sub.add_parser("generate", help="sequence a set and create the playlist")
+    sp.add_argument("--playlist", action="append", help="source playlist id (repeatable)")
+    sp.add_argument("--genre", action="append", help="genre filter (repeatable, OR)")
+    sp.add_argument("--mode", choices=["bpm", "key", "bpm+key"], default="bpm+key")
+    sp.add_argument("--tolerance", type=float, default=0.06, help="BPM tolerance 0.02-0.12")
+    sp.add_argument("--tracks", type=int, help="target track count")
+    sp.add_argument("--minutes", type=float, help="target duration instead of a count")
+    sp.add_argument("--start-track", help="spotify track id to open with")
+    sp.add_argument("--no-half-double", action="store_true", help="disable 70<->140 matching")
+    sp.add_argument("--energy-boost", action="store_true", help="allow +7 Camelot moves")
+    sp.add_argument("--name", help="playlist name (defaults to filter + mode + count)")
+    sp.add_argument("--public", action="store_true", help="create it public (default private)")
+    sp.add_argument("--dry-run", action="store_true", help="sequence only, create nothing")
+    sp.set_defaults(func=cmd_generate)
+
+    sp = sub.add_parser("exports", help="list playlists this app created")
+    sp.set_defaults(func=cmd_exports)
+
+    sp = sub.add_parser("ui", help="open the desktop window")
+    sp.set_defaults(func=cmd_ui)
 
     sp = sub.add_parser("doctor", help="probe the API surface against the build brief")
     sp.set_defaults(func=cmd_doctor)

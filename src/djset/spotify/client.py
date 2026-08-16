@@ -16,17 +16,25 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..models import Artist, PlaylistRef, Track
-from ..net import HttpError, request
+from ..net import HttpError, RateLimiter, request
 from .auth import SpotifyAuth
 
 log = logging.getLogger(__name__)
 
 API = "https://api.spotify.com/v1"
 
+# Spotify's quota for a development-mode app is small, and the batch endpoints
+# are gone — a genre pass is one request per artist across thousands of them.
+# Unthrottled, that earns a 429 with a Retry-After measured in hours. Pace the
+# calls instead of discovering the ceiling the hard way.
+DEFAULT_RATE_PER_HOUR = 6000  # ~100/min, ~1 every 0.6s
+_shared_limiter = RateLimiter(DEFAULT_RATE_PER_HOUR)
+
 
 class SpotifyClient:
-    def __init__(self, auth: SpotifyAuth) -> None:
+    def __init__(self, auth: SpotifyAuth, limiter: RateLimiter | None = None) -> None:
         self.auth = auth
+        self.limiter = limiter or _shared_limiter
 
     # ------------------------------------------------------------------
     def _get(self, path_or_url: str, **params: Any) -> dict[str, Any]:
@@ -37,6 +45,7 @@ class SpotifyClient:
             headers=self.auth.auth_header(),
             params=params or None,
             on_unauthorized=self.auth.refreshed_auth_header,
+            rate_limiter=self.limiter,
         )
         return resp.json()
 
@@ -198,13 +207,15 @@ def _parse_item(item: dict[str, Any] | None) -> tuple[Track, str | None] | None:
         return None
 
     artists = t.get("artists") or []
+    names = [a["name"] for a in artists if a.get("name")]
     return (
         Track(
             spotify_id=tid,
             uri=uri,
             title=t.get("name") or "",
-            artist=", ".join(a.get("name", "") for a in artists if a.get("name")),
+            artist=", ".join(names),
             artist_ids=[a["id"] for a in artists if a.get("id")],
+            artist_names=names,
             isrc=((t.get("external_ids") or {}).get("isrc")),
             album=(t.get("album") or {}).get("name"),
             duration_ms=t.get("duration_ms"),

@@ -6,8 +6,9 @@ CREATE TABLE IF NOT EXISTS tracks (
   uri          TEXT NOT NULL,        -- from the playlist-read response, NOT from search
   isrc         TEXT,                 -- primary join key for enrichment
   title        TEXT NOT NULL,
-  artist       TEXT NOT NULL,
+  artist       TEXT NOT NULL,        -- display form, joined with ", "
   artist_ids   TEXT,                 -- JSON array
+  artist_names TEXT,                 -- JSON array, parallel to artist_ids
   album        TEXT,
   duration_ms  INTEGER,
   added_at     TEXT

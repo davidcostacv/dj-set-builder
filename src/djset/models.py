@@ -14,12 +14,23 @@ class Track:
     spotify_id: str
     uri: str
     title: str
-    artist: str
+    artist: str  # display form, credited artists joined with ", "
     artist_ids: list[str] = field(default_factory=list)
+    # Credited artists as a list, in order. Kept separate from `artist` because
+    # splitting the joined string back apart is lossy: "Tyler, The Creator"
+    # contains a comma inside a single artist's name.
+    artist_names: list[str] = field(default_factory=list)
     isrc: str | None = None
     album: str | None = None
     duration_ms: int | None = None
     added_at: str | None = None
+
+    @property
+    def primary_artist(self) -> str:
+        """First credited artist, structurally rather than by parsing."""
+        if self.artist_names:
+            return self.artist_names[0]
+        return self.artist
 
 
 @dataclass(frozen=True)

@@ -104,6 +104,24 @@ build unpacks Qt to a temp directory on every launch, which is slow and trips
 some antivirus. The database lives in the OS app-data directory, so the program
 folder stays read-only and portable.
 
+### If the build fails at the final EXE step
+
+On this machine it stops with:
+
+```
+FileNotFoundError: [WinError 2] ... build\djset\djset.exe
+```
+
+`djset.pkg` (~13 MB) gets written but `djset.exe` is created and then vanishes.
+That is antivirus quarantining the PyInstaller bootloader — a very common false
+positive, because the bootloader is the same stub used by a lot of real malware.
+Avast is active on this machine and is already known to intercept HTTPS here.
+
+The fix is an antivirus exclusion for the build output folder
+(`dj-set-builder\build` and `dj-set-builder\dist`), added in Avast's settings.
+**Everything else works without packaging** — `djset ui` runs the app directly
+from source, which is the normal way to use it during development.
+
 ---
 
 ## Commands

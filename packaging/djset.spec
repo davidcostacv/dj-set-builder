@@ -39,6 +39,10 @@ a = Analysis(
     # Qt ships far more than this app uses; dropping the unused modules keeps
     # the bundle to a sane size.
     excludes=[
+        # This machine also has PyQt6 installed. PyInstaller aborts if it sees
+        # two Qt bindings, so every binding except PySide6 is excluded here
+        # rather than requiring a pristine build environment.
+        "PyQt6", "PyQt5", "PySide2", "qtpy",
         "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtQuick3D",
         "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
         "PySide6.Qt3DCore", "PySide6.QtMultimedia", "PySide6.QtCharts",

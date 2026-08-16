@@ -202,3 +202,150 @@ def test_playlist_name_is_prefilled_and_editable(window):
 
 def test_update_button_starts_disabled(window):
     assert window.update_btn.isEnabled() is False
+
+
+# ---------------------------------------------------------------------------
+# manual BPM/key entry from the track picker
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def picker_bits(qapp):
+    """A picker over two tracks: one complete, one missing its key."""
+    from djset.ui.track_picker import TrackPicker
+
+    tracks = [_t("good"), _t("keyless")]
+    features = {
+        "good": _f("good", 128.0, "8A"),
+        "keyless": AudioFeatures("keyless", 122.5, None, source="deezer"),
+    }
+    saved: list[tuple] = []
+
+    def on_manual_edit(sid, bpm, key):
+        saved.append((sid, bpm, key))
+        # Stand in for set_manual_features, which merges rather than replaces.
+        old = features[sid]
+        merged = AudioFeatures(
+            sid,
+            bpm if bpm is not None else old.bpm,
+            key if key is not None else old.key_camelot,
+            source="manual",
+            confidence=1.0,
+        )
+        features[sid] = merged
+        return merged
+
+    picker = TrackPicker(tracks, features, None, None, on_manual_edit=on_manual_edit)
+    return picker, features, saved
+
+
+def _row(picker, spotify_id):
+    from PySide6.QtCore import Qt
+
+    for item in picker._items:
+        if item.data(0, Qt.UserRole) == spotify_id:
+            return item
+    raise AssertionError(f"no row for {spotify_id}")
+
+
+def test_the_edit_button_is_hidden_without_somewhere_to_save(qapp):
+    """The dialog must not offer an action it cannot carry out."""
+    from djset.ui.track_picker import TrackPicker
+
+    picker = TrackPicker([_t("a")], {"a": _f("a")}, None, None)
+    assert picker.edit_btn.isEnabled() is False
+
+
+def test_editing_persists_through_the_callback_and_updates_the_row(picker_bits):
+    picker, features, saved = picker_bits
+    from PySide6.QtWidgets import QDialog
+
+    from djset.ui.track_picker import SHOW_ALL
+
+    picker.filter_mode.setCurrentText(SHOW_ALL)
+    item = _row(picker, "keyless")
+    assert item.text(3) == "—"  # no key to begin with
+    picker.tree.setCurrentItem(item)
+    item.setSelected(True)
+
+    # Drive the dialog without showing it: accept a typed key, no BPM.
+    class FakeDialog:
+        def __init__(self, *a, **k):
+            pass
+
+        def exec(self):
+            return QDialog.Accepted
+
+        def values(self):
+            return None, "5A"
+
+    import djset.ui.manual_features as mf
+
+    real = mf.ManualFeaturesDialog
+    mf.ManualFeaturesDialog = FakeDialog
+    try:
+        picker._edit_current()
+    finally:
+        mf.ManualFeaturesDialog = real
+
+    assert saved == [("keyless", None, "5A")]
+    assert features["keyless"].key_camelot == "5A"
+    # The BPM Deezer supplied survives: the point of merging.
+    assert features["keyless"].bpm == pytest.approx(122.5)
+    assert item.text(3) == "5A"
+    assert item.text(2) == "122"
+
+
+def test_missing_data_is_reachable_rather_than_hidden(picker_bits):
+    """The point of the third filter state. With only a "usable" toggle, the
+    tracks worth hand-fixing are exactly the ones hidden from view, so the
+    feature would only be findable by someone who already knew it existed."""
+    from djset.ui.track_picker import SHOW_ALL, SHOW_MISSING, SHOW_USABLE
+
+    picker, _, _ = picker_bits
+    keyless, good = _row(picker, "keyless"), _row(picker, "good")
+
+    picker.filter_mode.setCurrentText(SHOW_USABLE)
+    assert keyless.isHidden() and not good.isHidden()
+
+    picker.filter_mode.setCurrentText(SHOW_MISSING)
+    assert not keyless.isHidden() and good.isHidden()
+
+    picker.filter_mode.setCurrentText(SHOW_ALL)
+    assert not keyless.isHidden() and not good.isHidden()
+
+
+def test_a_fixed_track_moves_between_buckets(picker_bits):
+    from djset.ui.track_picker import SHOW_USABLE
+
+    picker, features, _ = picker_bits
+    picker.filter_mode.setCurrentText(SHOW_USABLE)
+    item = _row(picker, "keyless")
+    assert item.isHidden()
+
+    features["keyless"] = AudioFeatures("keyless", 122.5, "5A", source="manual")
+    picker._apply_filter()
+
+    assert not item.isHidden()
+
+
+def test_the_button_needs_exactly_one_visible_selected_row(picker_bits):
+    from djset.ui.track_picker import SHOW_ALL
+
+    picker, _, _ = picker_bits
+    picker.filter_mode.setCurrentText(SHOW_ALL)
+
+    picker.tree.clearSelection()
+    picker._update_edit_button()
+    assert picker.edit_btn.isEnabled() is False
+
+    good = _row(picker, "good")
+    picker.tree.setCurrentItem(good)
+    good.setSelected(True)
+    picker._update_edit_button()
+    assert picker.edit_btn.isEnabled() is True
+
+    # Two rows is ambiguous: there is only one dialog.
+    _row(picker, "keyless").setSelected(True)
+    picker._update_edit_button()
+    assert picker.edit_btn.isEnabled() is False

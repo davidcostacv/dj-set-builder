@@ -700,7 +700,11 @@ class MainWindow(QMainWindow):
             return
 
         dialog = TrackPicker(
-            tracks, self._features, getattr(self, "_picked_ids", None), self
+            tracks,
+            self._features,
+            getattr(self, "_picked_ids", None),
+            self,
+            on_manual_edit=self._save_manual_features,
         )
         if dialog.exec() != QDialog.Accepted:
             return
@@ -710,6 +714,19 @@ class MainWindow(QMainWindow):
         # distinction the genre pane makes.
         self._picked_ids = chosen or None
         self._recompute()
+
+    def _save_manual_features(self, spotify_id: str, bpm, key_camelot):
+        """Persist a hand-typed BPM/key and keep the in-memory copy in step.
+
+        Fields left blank are merged with whatever is already on file, so
+        supplying only the key does not discard a BPM another source found.
+        """
+        from ..enrichment.base import set_manual_features
+
+        with db.session() as conn:
+            features = set_manual_features(conn, spotify_id, bpm, key_camelot)
+        self._features[spotify_id] = features
+        return features
 
     def on_clear_picked(self) -> None:
         self._picked_ids = None

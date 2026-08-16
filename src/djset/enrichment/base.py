@@ -107,7 +107,21 @@ def set_manual_features(
     key_camelot: str | None,
     energy: float | None = None,
 ) -> AudioFeatures:
-    """Write a hand-typed value. Always highest trust."""
+    """Write a hand-typed value. Always highest trust.
+
+    Fields left as None are *filled in* from whatever is already on file rather
+    than clearing it. Typing a value is adding knowledge, not asserting that
+    everything omitted is unknown — and the commonest reason to reach for this
+    at all is a track that has a BPM from Deezer but no key, where replacing
+    the row wholesale would erase the BPM and leave the track exactly as
+    unsequenceable as before.
+    """
+    existing = db.all_features(conn).get(spotify_id)
+    if existing is not None:
+        bpm = bpm if bpm is not None else existing.bpm
+        key_camelot = key_camelot if key_camelot is not None else existing.key_camelot
+        energy = energy if energy is not None else existing.energy
+
     f = AudioFeatures(
         spotify_id=spotify_id,
         bpm=bpm,

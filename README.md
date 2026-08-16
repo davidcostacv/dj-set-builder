@@ -128,6 +128,19 @@ which you can drag to reorder; **Update playlist** pushes edits back.
 | **Reorder a whole playlist** | Target `whole selection`. Every eligible track gets a place, ordered as well as the data allows. |
 | **Hand-pick tracks** | **Choose tracks…** in pane 1 opens a searchable picker. Sequence just those. |
 
+### Filling in what no source knows
+
+Coverage has a ceiling no amount of API work removes, so the picker lets you
+type a BPM and key yourself. Set its filter to **Missing BPM or key**, select a
+track, and press **Set BPM / key…** (or double-click it). The key field takes
+any notation the converter understands — `8A`, `Am`, `F#m`, `Db`, `C minor`,
+`9m` — and echoes back the Camelot code it resolved to.
+
+A hand-typed value is priority 0: the highest trust there is, never overwritten
+by an automated source. Fields left blank are *filled in* from what is already
+on file rather than clearing it, so supplying only the key keeps a BPM that
+Deezer found. Same thing headless: `djset manual <track-id> --bpm 128 --key Am`.
+
 "Reorder a whole playlist" is a different job from "build a set", and it behaves
 differently on purpose. A strict BPM+key chain through several hundred tracks
 rarely exists, so leftovers are placed at the gentlest available seam rather

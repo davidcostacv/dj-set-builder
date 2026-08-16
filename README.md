@@ -83,13 +83,46 @@ button sequences the set *and* creates the playlist in your account — there is
 no separate export step. The result pane shows the link plus the ordered table,
 which you can drag to reorder; **Update playlist** pushes edits back.
 
-**From the CLI**, the same flow without the window:
+### Three ways to choose what goes in
+
+| | |
+|---|---|
+| **A set of N tracks** | Target `tracks` or `minutes`. Picks the best path it can find and tells you if it fell short. |
+| **Reorder a whole playlist** | Target `whole selection`. Every eligible track gets a place, ordered as well as the data allows. |
+| **Hand-pick tracks** | **Choose tracks…** in pane 1 opens a searchable picker. Sequence just those. |
+
+"Reorder a whole playlist" is a different job from "build a set", and it behaves
+differently on purpose. A strict BPM+key chain through several hundred tracks
+rarely exists, so leftovers are placed at the gentlest available seam rather
+than dropped — and the count of forced seams is reported, never hidden. A
+numeric target keeps the stricter behaviour: it returns a short set and names
+the limiting factor instead of padding.
+
+**From the CLI**, the same three:
 
 ```bash
 djset generate --mode bpm+key --tracks 24 --dry-run
 ```
 
+```bash
+djset generate --playlist <id> --all --dry-run
+```
+
+```bash
+djset tracks --search "mac miller" --usable-only
+```
+
+then feed specific ids to `djset generate --track <id> --track <id> --all`.
 Drop `--dry-run` to create the playlist for real.
+
+### Duplicates
+
+The same recording routinely appears as an album cut, a single and a
+compilation, each with its own Spotify id — and sometimes with *different*
+ISRCs after a re-release. Sets are deduplicated on ISRC first and normalised
+artist+title second. Remixes, extended mixes and live versions are deliberately
+kept distinct: they are different recordings at different tempos, and a DJ
+wants both available.
 
 ---
 

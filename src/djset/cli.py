@@ -187,6 +187,16 @@ def cmd_generate(args: argparse.Namespace) -> int:
             print("No tracks. Run `djset sync` first.")
             return 1
 
+        if args.track:
+            wanted = set(args.track)
+            pool = [t for t in pool if t.spotify_id in wanted]
+            missing = wanted - {t.spotify_id for t in pool}
+            if missing:
+                print(f"Not in the local library: {', '.join(sorted(missing))}")
+            if not pool:
+                print("None of the given track ids are in the selected sources.")
+                return 1
+
         genres = set(args.genre) if args.genre else None
         artist_genres = db.artist_genres(conn)
         aliases = db.genre_aliases(conn)
@@ -201,6 +211,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
             tolerance=args.tolerance,
             half_double=not args.no_half_double,
             energy_boost=args.energy_boost,
+            use_all=args.all,
             target_tracks=args.tracks,
             target_minutes=args.minutes,
             start_track_id=args.start_track,
@@ -242,6 +253,35 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
         print(f"\n{export.message}")
         print(f"\n  {export.url}\n")
+    return 0
+
+
+def cmd_tracks(args: argparse.Namespace) -> int:
+    """List track ids, so `generate --track` can be pointed at specific ones."""
+    with db.session() as conn:
+        pool = (
+            db.tracks_in_playlists(conn, args.playlist)
+            if args.playlist
+            else db.all_tracks(conn)
+        )
+        features = db.all_features(conn)
+
+    needle = (args.search or "").lower()
+    shown = 0
+    for t in pool:
+        if needle and needle not in f"{t.title} {t.artist}".lower():
+            continue
+        f = features.get(t.spotify_id)
+        if args.usable_only and not (f and f.bpm and f.key_camelot):
+            continue
+        bpm = f"{f.bpm:.0f}" if f and f.bpm else "—"
+        key = (f.key_camelot if f else None) or "—"
+        print(f"{t.spotify_id}  {bpm:>4} {key:<4} {t.artist[:26]:26} {t.title[:36]}")
+        shown += 1
+        if args.limit and shown >= args.limit:
+            break
+    if not shown:
+        print("Nothing matched.")
     return 0
 
 
@@ -351,6 +391,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--tolerance", type=float, default=0.06, help="BPM tolerance 0.02-0.12")
     sp.add_argument("--tracks", type=int, help="target track count")
     sp.add_argument("--minutes", type=float, help="target duration instead of a count")
+    sp.add_argument(
+        "--all", action="store_true",
+        help="reorder EVERY eligible track instead of picking a count",
+    )
+    sp.add_argument(
+        "--track", action="append",
+        help="restrict to specific spotify track ids (repeatable)",
+    )
     sp.add_argument("--start-track", help="spotify track id to open with")
     sp.add_argument("--no-half-double", action="store_true", help="disable 70<->140 matching")
     sp.add_argument("--energy-boost", action="store_true", help="allow +7 Camelot moves")
@@ -358,6 +406,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--public", action="store_true", help="create it public (default private)")
     sp.add_argument("--dry-run", action="store_true", help="sequence only, create nothing")
     sp.set_defaults(func=cmd_generate)
+
+    sp = sub.add_parser("tracks", help="list track ids for use with `generate --track`")
+    sp.add_argument("--playlist", action="append", help="source playlist id (repeatable)")
+    sp.add_argument("--search", help="filter by title or artist")
+    sp.add_argument("--usable-only", action="store_true", help="only tracks with BPM+key")
+    sp.add_argument("--limit", type=int, default=50)
+    sp.set_defaults(func=cmd_tracks)
 
     sp = sub.add_parser("exports", help="list playlists this app created")
     sp.set_defaults(func=cmd_exports)

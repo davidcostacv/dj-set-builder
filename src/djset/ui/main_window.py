@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QGroupBox,
     QHBoxLayout,
@@ -127,6 +128,18 @@ class MainWindow(QMainWindow):
         self.sources_summary = QLabel("—")
         self.sources_summary.setWordWrap(True)
         lay.addWidget(self.sources_summary)
+
+        picker_row = QHBoxLayout()
+        self.pick_btn = QPushButton("Choose tracks…")
+        self.pick_btn.setToolTip("Hand-pick a subset instead of using every track")
+        self.pick_btn.clicked.connect(self.on_pick_tracks)
+        self.clear_pick_btn = QPushButton("Use all")
+        self.clear_pick_btn.setToolTip("Clear the hand-picked subset")
+        self.clear_pick_btn.clicked.connect(self.on_clear_picked)
+        self.clear_pick_btn.setEnabled(False)
+        picker_row.addWidget(self.pick_btn)
+        picker_row.addWidget(self.clear_pick_btn)
+        lay.addLayout(picker_row)
         return box
 
     def _pane_genres(self) -> QWidget:
@@ -202,7 +215,10 @@ class MainWindow(QMainWindow):
         lay.addSpacing(8)
         row = QHBoxLayout()
         self.target_kind = QComboBox()
-        self.target_kind.addItems(["tracks", "minutes"])
+        # "whole selection" reorders everything eligible rather than picking a
+        # fixed count — for taking a playlist and putting it in mixable order.
+        self.target_kind.addItems(["tracks", "minutes", "whole selection"])
+        self.target_kind.currentTextChanged.connect(self._on_target_kind)
         self.target_value = QSpinBox()
         self.target_value.setRange(2, 500)
         self.target_value.setValue(24)
@@ -331,18 +347,30 @@ class MainWindow(QMainWindow):
         }
         return chosen or None
 
-    def _pool(self) -> list:
+    def _all_source_tracks(self) -> list:
         sources = self.selected_sources()
         if not sources:
             return []
         with db.session() as conn:
             return db.tracks_in_playlists(conn, sources)
 
+    def _pool(self) -> list:
+        """Tracks feeding the sequencer: everything in the selected sources,
+        or just the hand-picked subset when one is active."""
+        tracks = self._all_source_tracks()
+        picked = getattr(self, "_picked_ids", None)
+        if picked:
+            return [t for t in tracks if t.spotify_id in picked]
+        return tracks
+
     def _recompute(self) -> None:
         pool = self._pool()
+        picked = getattr(self, "_picked_ids", None)
+        suffix = f" (hand-picked from {len(self._all_source_tracks())})" if picked else ""
         self.sources_summary.setText(
-            f"{len(self.selected_sources())} source(s) · {len(pool)} tracks"
+            f"{len(self.selected_sources())} source(s) · {len(pool)} tracks{suffix}"
         )
+        self.clear_pick_btn.setEnabled(bool(picked))
 
         # Genre rows are built from the tags present in THIS selection.
         stats = genre_index(pool, self._artist_genres, self._aliases, self._features)
@@ -409,7 +437,11 @@ class MainWindow(QMainWindow):
         if genres:
             parts.append(" / ".join(sorted(g.title() for g in genres)))
         parts.append(self._mode().value.upper())
-        parts.append(f"{self.target_value.value()} {self.target_kind.currentText()}")
+        kind = self.target_kind.currentText()
+        parts.append(
+            "reordered" if kind == "whole selection"
+            else f"{self.target_value.value()} {kind}"
+        )
         self.playlist_name.setPlaceholderText(" · ".join(parts))
 
     # ------------------------------------------------------------------
@@ -500,14 +532,15 @@ class MainWindow(QMainWindow):
         genres = self.selected_genres()
         eligible = filter_tracks(pool, genres, self._artist_genres, self._aliases)
 
-        by_tracks = self.target_kind.currentText() == "tracks"
+        kind = self.target_kind.currentText()
         opts = SequenceOptions(
             mode=self._mode(),
             tolerance=self.tolerance.value(),
             half_double=self.half_double.isChecked(),
             energy_boost=self.energy_boost.isChecked(),
-            target_tracks=self.target_value.value() if by_tracks else None,
-            target_minutes=None if by_tracks else float(self.target_value.value()),
+            use_all=kind == "whole selection",
+            target_tracks=self.target_value.value() if kind == "tracks" else None,
+            target_minutes=float(self.target_value.value()) if kind == "minutes" else None,
         )
 
         result = build_set(
@@ -656,6 +689,36 @@ class MainWindow(QMainWindow):
             ),
             on_error=self._on_error,
         )
+
+    def on_pick_tracks(self) -> None:
+        """Hand-pick a subset of the selected sources."""
+        from .track_picker import TrackPicker
+
+        tracks = self._all_source_tracks()
+        if not tracks:
+            QMessageBox.information(self, "No sources", "Select at least one source.")
+            return
+
+        dialog = TrackPicker(
+            tracks, self._features, getattr(self, "_picked_ids", None), self
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        chosen = dialog.selected_ids()
+        # An empty selection means "no subset", not "no tracks" — the same
+        # distinction the genre pane makes.
+        self._picked_ids = chosen or None
+        self._recompute()
+
+    def on_clear_picked(self) -> None:
+        self._picked_ids = None
+        self._recompute()
+
+    def _on_target_kind(self, kind: str) -> None:
+        # "whole selection" has no number to set.
+        self.target_value.setEnabled(kind != "whole selection")
+        self._refresh_name_placeholder()
 
     def on_copy_link(self) -> None:
         QGuiApplication.clipboard().setText(self.link_label.text())

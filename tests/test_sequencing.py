@@ -188,6 +188,40 @@ def test_builds_a_set_of_the_requested_length():
     assert res.average_quality > 0
 
 
+def test_the_same_recording_never_appears_twice():
+    """Regression, straight from a real generated set: Kendrick Lamar's
+    "Alright" and Lil Baby's "Sum 2 Prove" each appeared twice. Different
+    Spotify ids (album cut vs single) but identical ISRCs, so per-id
+    uniqueness was not enough."""
+    tracks = [
+        Track(spotify_id="a1", uri="spotify:track:a1", title="Alright",
+              artist="Kendrick Lamar", isrc="USUM71502498", duration_ms=210_000),
+        Track(spotify_id="a2", uri="spotify:track:a2", title="Alright",
+              artist="Kendrick Lamar", isrc="USUM71502498", duration_ms=210_000),
+        Track(spotify_id="b1", uri="spotify:track:b1", title="Sum 2 Prove",
+              artist="Lil Baby", isrc="USUG11902886", duration_ms=210_000),
+        Track(spotify_id="b2", uri="spotify:track:b2", title="Sum 2 Prove",
+              artist="Lil Baby", isrc="USUG11902886", duration_ms=210_000),
+        _track("c1"),
+    ]
+    feats = {
+        "a1": F("a1", 112, "9B"), "a2": F("a2", 112, "9B"),
+        "b1": F("b1", 123, "9A"), "b2": F("b2", 123, "9A"),
+        "c1": F("c1", 120, "9A"),
+    }
+    res = build_set(tracks, feats, SequenceOptions(target_tracks=5))
+
+    isrcs = [t.isrc for t in res.tracks if t.isrc]
+    assert len(isrcs) == len(set(isrcs))
+    assert len(res.tracks) <= 3  # five inputs, but only three distinct recordings
+
+
+def test_tracks_without_isrc_are_still_usable():
+    tracks, feats = _chain(10)  # no ISRCs at all
+    res = build_set(tracks, feats, SequenceOptions(target_tracks=6))
+    assert len(res.tracks) == 6
+
+
 def test_no_track_repeats_within_a_set():
     tracks, feats = _chain(30)
     res = build_set(tracks, feats, SequenceOptions(target_tracks=15))

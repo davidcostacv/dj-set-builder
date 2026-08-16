@@ -176,3 +176,43 @@ def dedupe_by_isrc(tracks: list[Track]) -> list[Track]:
             seen.add(t.isrc)
         out.append(t)
     return out
+
+
+def recording_key(track: Track) -> str:
+    """Identity of a recording for dedupe when ISRCs disagree.
+
+    Deliberately keeps version markers ("- Extended Mix", "(Radio Edit)") so a
+    remix is NOT collapsed into its original — those are different recordings
+    at different tempos and a DJ wants both available. It does strip featuring
+    credits, so "LOYAL (feat. Drake)" and "LOYAL (feat. Drake and Bad Bunny)"
+    resolve to the same song rather than playing back to back.
+    """
+    from .enrichment.normalize import normalize_artist, title_variants
+
+    variants = title_variants(track.title)
+    title = variants[0] if variants else track.title.lower()
+    return f"{normalize_artist(track.primary_artist)}|{title}"
+
+
+def dedupe_recordings(tracks: list[Track]) -> list[Track]:
+    """Full duplicate removal: ISRC first, then artist+title.
+
+    ISRC is authoritative but not sufficient — a re-release or remaster of the
+    same song carries a different ISRC, which is how "This Love" by Maroon 5
+    ended up in a generated set twice.
+    """
+    out: list[Track] = []
+    seen_isrc: set[str] = set()
+    seen_key: set[str] = set()
+
+    for t in tracks:
+        if t.isrc and t.isrc in seen_isrc:
+            continue
+        key = recording_key(t)
+        if key in seen_key:
+            continue
+        if t.isrc:
+            seen_isrc.add(t.isrc)
+        seen_key.add(key)
+        out.append(t)
+    return out

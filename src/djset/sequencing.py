@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .camelot import parse_camelot
+from .filtering import dedupe_recordings
 from .models import AudioFeatures, Track
 
 # ---------------------------------------------------------------------------
@@ -137,6 +138,9 @@ class SequenceOptions:
     energy_boost: bool = False
     target_tracks: int | None = None
     target_minutes: float | None = None
+    # Reorder everything that is eligible, rather than picking a fixed count.
+    # Used for "take this playlist and put it in mixable order".
+    use_all: bool = False
     start_track_id: str | None = None
     beam_width: int = 10
 
@@ -211,6 +215,9 @@ class SetResult:
     requested: int = 0
     pool_size: int = 0
     limiting_factor: LimitingFactor = LimitingFactor.NONE
+    # Transitions that had to break the active predicates, which only happens
+    # in "reorder everything" mode where placing every track is the point.
+    compromises: int = 0
 
     @property
     def reached_target(self) -> bool:
@@ -229,10 +236,16 @@ class SetResult:
     def explain(self) -> str:
         """Never silently pad a short set — say what ran out."""
         if self.reached_target:
-            return (
+            base = (
                 f"{len(self.tracks)} tracks, average transition quality "
                 f"{self.average_quality:.0%}."
             )
+            if self.compromises:
+                base += (
+                    f" {self.compromises} transition(s) had to break the "
+                    "BPM/key rules to place every track."
+                )
+            return base
         return (
             f"Found {len(self.tracks)} of {self.requested} requested tracks. "
             f"The limiting factor was the {self.limiting_factor.value} "
@@ -370,6 +383,11 @@ def build_set(
     eligible_before_filter: int | None = None,
 ) -> SetResult:
     """Sequence a set from the (already genre-filtered) eligible tracks."""
+    # Deduplicate by ISRC before anything else. The same recording routinely
+    # appears as an album track, a single and a compilation cut, each with its
+    # own Spotify id — so per-id uniqueness is not enough to stop a set playing
+    # the same song twice.
+    tracks = dedupe_recordings(tracks)
     graph = TrackGraph(tracks, features, opts)
     target = _target_length(graph, opts)
 
@@ -435,6 +453,15 @@ def build_set(
         return result
 
     path = best.path[:target]
+
+    if opts.use_all and len(path) < len(graph):
+        # "Reorder everything" means every track gets a place. The strict
+        # predicates rarely admit a single path through hundreds of tracks, so
+        # the leftovers are appended at the least-bad seam available. Those
+        # seams are counted and shown, never hidden — that is the difference
+        # between an honest compromise and silent padding.
+        path, result.compromises = _place_remaining(graph, path, opts)
+
     result.tracks = [graph.tracks[i] for i in path]
     result.transitions = [
         transition(graph.feat[a], graph.feat[b], opts) or Transition(None, None, None, 0.0)
@@ -447,7 +474,60 @@ def build_set(
     return result
 
 
+def _soft_distance(a: AudioFeatures, b: AudioFeatures) -> float:
+    """How bad a transition is when the strict predicates already failed.
+
+    Used only to order the leftovers in "reorder everything" mode, so that a
+    forced seam is at least the gentlest one available.
+    """
+    cost = 0.0
+    if a.bpm and b.bpm:
+        cost += min(bpm_ratio(a.bpm, b.bpm), bpm_ratio(a.bpm, b.bpm * 2),
+                    bpm_ratio(a.bpm, b.bpm / 2)) * 10.0
+    else:
+        cost += 5.0
+    if a.key_camelot and b.key_camelot:
+        try:
+            an, al = parse_camelot(a.key_camelot)
+            bn, bl = parse_camelot(b.key_camelot)
+            steps = min((bn - an) % 12, (an - bn) % 12)
+            cost += steps + (0 if al == bl else 1)
+        except ValueError:
+            cost += 6.0
+    else:
+        cost += 3.0
+    return cost
+
+
+def _place_remaining(
+    graph: TrackGraph, path: list[int], opts: SequenceOptions
+) -> tuple[list[int], int]:
+    """Append every unplaced track, preferring valid moves over forced ones."""
+    placed = set(path)
+    remaining = [i for i in range(len(graph)) if i not in placed]
+    out = list(path)
+    compromises = 0
+
+    while remaining:
+        tail = out[-1]
+        # A legal continuation is always better than a forced one.
+        legal = [(j, tr) for j, tr in graph.neighbours(tail) if j in set(remaining)]
+        if legal:
+            j = max(legal, key=lambda p: p[1].quality)[0]
+        else:
+            j = min(remaining, key=lambda k: _soft_distance(graph.feat[tail], graph.feat[k]))
+            compromises += 1
+        out.append(j)
+        remaining.remove(j)
+
+    return out, compromises
+
+
 def _target_length(graph: TrackGraph, opts: SequenceOptions) -> int:
+    if opts.use_all:
+        # Every sequenceable track. The search will still stop early if the
+        # graph cannot be traversed that far, and the result reports why.
+        return max(1, len(graph))
     if opts.target_tracks:
         return max(1, opts.target_tracks)
     if opts.target_minutes:

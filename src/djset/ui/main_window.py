@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 
 from .. import db
 from ..config import ConfigError, load_config
-from ..enrichment import ATTRIBUTION_URL, GetSongBPMSource, Resolver, enrich_tracks
+from ..enrichment import ATTRIBUTION_URL, Resolver, default_sources, enrich_tracks
 from ..export import ExportError, export_to_spotify, split_by_genre, update_playlist_order
 from ..filtering import UNKNOWN, filter_tracks, genre_index, summarize
 from ..models import LIKED_SONGS_ID, LIKED_SONGS_NAME
@@ -501,7 +501,7 @@ class MainWindow(QMainWindow):
 
         def job(progress, cancel):
             resolver = Resolver(
-                [GetSongBPMSource(cfg.getsongbpm_api_key, cfg.getsongbpm_rate_per_hour)]
+                default_sources(cfg.getsongbpm_api_key, cfg.getsongbpm_rate_per_hour)
             )
             with db.session() as conn:
                 tracks = db.all_tracks(conn)

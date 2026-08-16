@@ -10,7 +10,12 @@ import sys
 
 from . import db
 from .config import ConfigError, app_data_dir, db_path, load_config, log_path
-from .enrichment import ATTRIBUTION_TEXT, GetSongBPMSource, Resolver, enrich_tracks
+from .enrichment import (
+    ATTRIBUTION_TEXT,
+    Resolver,
+    default_sources,
+    enrich_tracks,
+)
 from .logging_setup import setup_logging
 from .net import close_client
 from .report import build_coverage, coverage_as_json, format_coverage
@@ -110,8 +115,15 @@ def cmd_artists(args: argparse.Namespace) -> int:
 
 
 def cmd_enrich(args: argparse.Namespace) -> int:
-    cfg = load_config(require_getsongbpm=True)
-    resolver = Resolver([GetSongBPMSource(cfg.getsongbpm_api_key, cfg.getsongbpm_rate_per_hour)])
+    cfg = load_config(require_getsongbpm=not args.no_getsongbpm)
+    sources = default_sources(
+        None if args.no_getsongbpm else cfg.getsongbpm_api_key,
+        cfg.getsongbpm_rate_per_hour,
+        acousticbrainz=not args.no_acousticbrainz,
+        deezer=not args.no_deezer,
+    )
+    resolver = Resolver(sources)
+    print("Sources: " + ", ".join(f"{s.name}({s.priority})" for s in resolver.sources))
 
     with db.session() as conn:
         if args.sample:
@@ -127,10 +139,12 @@ def cmd_enrich(args: argparse.Namespace) -> int:
             print("No tracks in the local DB — run `djset sync` first.")
             return 1
 
-        print(f"Enriching {scope} tracks via GetSongBPM…")
+        print(f"Enriching {scope} tracks…")
         print("(Ctrl+C is safe — every result is committed as it lands.)\n")
         try:
-            stats = enrich_tracks(conn, resolver, tracks, progress=_enrich_progress)
+            stats = enrich_tracks(
+                conn, resolver, tracks, progress=_enrich_progress, refresh=args.refresh
+            )
         except KeyboardInterrupt:
             conn.commit()
             print("\nCancelled. Progress saved — re-run to resume.")
@@ -449,6 +463,22 @@ def _add_enrich_args(sp: argparse.ArgumentParser) -> None:
         type=int,
         help="process a deterministic random sample of N tracks — use this to "
         "measure coverage, not --limit",
+    )
+    sp.add_argument(
+        "--refresh",
+        action="store_true",
+        help="re-attempt tracks that already have features or hit the retry "
+        "ceiling — use after adding a new source",
+    )
+    sp.add_argument("--no-deezer", action="store_true", help="disable the Deezer source")
+    sp.add_argument(
+        "--no-getsongbpm", action="store_true", help="disable the GetSongBPM source"
+    )
+    sp.add_argument(
+        "--no-acousticbrainz",
+        action="store_true",
+        help="disable the AcousticBrainz source — it is rate-limited to 1 req/s "
+        "by MusicBrainz, so it dominates the runtime of a full pass",
     )
 
 

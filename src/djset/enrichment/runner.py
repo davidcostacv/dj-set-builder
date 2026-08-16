@@ -44,17 +44,26 @@ def enrich_tracks(
     cancel: threading.Event | None = None,
     progress: Progress = _noop,
     commit_every: int = 10,
+    refresh: bool = False,
 ) -> EnrichmentStats:
+    """Resolve features for tracks that do not have them yet.
+
+    A track with *any* cached features is skipped, not just a complete one.
+    Some sources are partial by nature — Deezer supplies tempo but no key — so
+    treating a BPM-only row as unfinished would re-query every source for it on
+    every run, forever, for no gain. ``refresh=True`` re-attempts everything,
+    including tracks that previously hit the retry ceiling; that is the switch
+    to pull after adding a new source.
+    """
     items = tracks if tracks is not None else db.all_tracks(conn)
     stats = EnrichmentStats(considered=len(items))
 
     cached = db.all_features(conn)
-    exhausted = db.exhausted_ids(conn)
+    exhausted = set() if refresh else db.exhausted_ids(conn)
 
     pending = []
     for t in items:
-        existing = cached.get(t.spotify_id)
-        if existing is not None and existing.is_usable:
+        if not refresh and cached.get(t.spotify_id) is not None:
             stats.already_cached += 1
             continue
         if t.spotify_id in exhausted:

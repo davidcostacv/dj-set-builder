@@ -32,12 +32,37 @@ All nine build-order steps are implemented. **283 tests, no network calls.**
 
 ### Known limitations, measured rather than assumed
 
-**Enrichment coverage is ~29%.** GetSongBPM's catalogue is thin on post-2015
-hip-hop, reggaetón and Latin pop. This was verified, not guessed: ten missed
-tracks by well-known artists were re-queried under every search formulation the
-API supports and none were recoverable, while the artists themselves *are*
-present. Tracks without BPM and key can still be filtered and split; they just
-cannot take part in harmonic sequencing.
+**Enrichment coverage is partial, and every source was measured before it was
+added.** GetSongBPM's catalogue is thin on post-2015 hip-hop, reggaetón and
+Latin pop — verified, not guessed: ten missed tracks by well-known artists were
+re-queried under every search formulation the API supports and none were
+recoverable, while the artists themselves *are* present. Tracks without BPM and
+key can still be filtered and split; they just cannot take part in harmonic
+sequencing.
+
+Two further sources were added to close the gap, each measured on the tracks
+its predecessors had already failed on:
+
+| Source | Gives | Match | Marginal gain on prior misses |
+|---|---|---|---|
+| GetSongBPM (20) | BPM + key | fuzzy artist/title | baseline, ~35% of library |
+| AcousticBrainz (25) | BPM + key | exact, ISRC → MBID | **38%** with key, 5% BPM-only |
+| Deezer (30) | BPM only | exact, ISRC | ~20% |
+
+Spotify's own `/audio-features` and `/audio-analysis` are **not** an option:
+both return `403` for all applications since November 2024. Verified against a
+live token; the bare 403 with no message body is the deprecation signature, not
+a scope problem.
+
+AcousticBrainz stopped accepting submissions in 2022 but still serves its
+dataset. It is the only free source found that supplies harmonic data on an
+exact join. Because it needs two hops and MusicBrainz enforces one request per
+second, it dominates the runtime of a full pass — `djset enrich
+--no-acousticbrainz` skips it. Its key is only trusted above an Essentia
+`key_strength` of 0.5; below that the tempo is kept and the key dropped, since
+a missing key costs one track while a wrong key corrupts every transition it
+takes part in. That floor is measured: over 26 analyses the median strength was
+0.64 and only 11.5% fell below it.
 
 **Spotify may no longer return artist genres.** Every artist fetched so far came
 back with an empty `genres` array. If that is a permanent removal, the genre
@@ -165,7 +190,7 @@ from source, which is the normal way to use it during development.
 | `djset whoami` | `GET /me` smoke test |
 | `djset sources` | list playlists + Liked Songs |
 | `djset sync` | pull playlists and artist genres into SQLite |
-| `djset enrich` | fill BPM/key from GetSongBPM. `--sample N` for a representative random sample (use this to measure coverage); `--limit N` takes the first N in storage order and is biased |
+| `djset enrich` | fill BPM/key from the source chain. `--sample N` for a representative random sample (use this to measure coverage); `--limit N` takes the first N in storage order and is biased. `--refresh` re-attempts everything after adding a source. `--no-acousticbrainz` / `--no-deezer` / `--no-getsongbpm` disable one source |
 | `djset artists` | fetch artist genres only (slow: one request per artist) |
 | `djset coverage` | print the coverage report (`--json` for machine-readable) |
 | `djset report` | sync + enrich + coverage in one go |
@@ -193,10 +218,16 @@ Enrichment resolves through an ordered chain, stopping at the first hit: local
 cache → registered sources by ascending `priority` → manual entry (highest
 trust, never overwritten by an automated source).
 
-`GetSongBPMSource` is priority 20. `RekordboxXMLSource` is priority 10 and is a
-deliberate stub — registering it later automatically supersedes API data on
-conflict with no other code changing. `tests/test_source_priority.py` proves
-that ordering works today, against two fake sources.
+Registered today: `GetSongBPMSource` (20), `AcousticBrainzSource` (25),
+`DeezerSource` (30). The order encodes what each is worth — curated values beat
+estimates, and a source carrying key beats one carrying only tempo.
+`RekordboxXMLSource` is priority 10 and is a deliberate stub; registering it
+later automatically supersedes API data on conflict with no other code
+changing. `tests/test_source_priority.py` proves that ordering works today,
+against two fake sources.
+
+Adding a source is a registration, not a refactor — Deezer and AcousticBrainz
+were both added without touching the sequencer, the filter, or the UI.
 
 ### Files
 
@@ -211,7 +242,8 @@ src/djset/
   doctor.py       API-surface probe
   cli.py          headless entry point
   spotify/        auth (PKCE + keyring), client, sync
-  enrichment/     FeatureSource protocol, resolver, normalizer, GetSongBPM, Rekordbox stub
+  enrichment/     FeatureSource protocol, resolver, normalizer,
+                  GetSongBPM + AcousticBrainz + Deezer, Rekordbox stub
 ```
 
 ---

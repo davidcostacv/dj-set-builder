@@ -93,6 +93,16 @@ token.** With the same credentials in the same second, `GET /v1/me` answers
 one you actually need — check the endpoint in question, and only once, since
 each attempt while penalised appears to extend the window.
 
+**GetSongBPM's rate limit is unknown, and `GETSONGBPM_RATE_PER_HOUR=2400` is a
+guess.** It is the largest single spacing in the enrichment chain at 1.5s per
+track, so it dominates the runtime of a full pass and is the obvious thing to
+raise — but there is nothing to raise it *against*. Successful responses carry
+no `X-RateLimit-*`, no quota and no `Retry-After` header, and `getsongbpm.com/api`
+returns `403` to any programmatic fetch, so the published policy is not readable
+either. The remaining option is probing by burst until it refuses, which risks
+the key for a number that only buys wall-clock time. Left conservative
+deliberately; raise it via the env var if you learn the real figure.
+
 ---
 
 ## Setup
@@ -192,14 +202,29 @@ wants both available.
 pyinstaller packaging/djset.spec --noconfirm
 ```
 
-Produces `dist/djset/djset.exe`. One-folder rather than one-file: a one-file
-build unpacks Qt to a temp directory on every launch, which is slow and trips
-some antivirus. The database lives in the OS app-data directory, so the program
-folder stays read-only and portable.
+Produces `dist/djset/djset.exe` — a 13.9 MB launcher beside a 158 MB
+`_internal`. One-folder rather than one-file: a one-file build unpacks Qt to a
+temp directory on every launch, which is slow and trips some antivirus. The
+database lives in the OS app-data directory, so the program folder stays
+read-only and portable.
+
+Verified end to end rather than by the build exiting 0 — the packaged binary
+launches, survives, writes nothing to stderr, and creates a fresh schema from
+the bundled `schema.sql`, which is the part a broken bundle gets wrong:
+
+```bash
+QT_QPA_PLATFORM=offscreen DJSET_DB_PATH=/tmp/probe.sqlite3 dist/djset/djset.exe
+```
+
+The spec earns its keep in three places, all of which the build confirms:
+`schema.sql` is read at runtime rather than imported, so it needs an explicit
+`datas` entry; `keyring` resolves its backend at runtime and needs
+`hiddenimports`; and PySide6 ships far more than this app uses, so the bundle
+carries only QtCore, QtGui, QtNetwork and QtWidgets.
 
 ### If the build fails at the final EXE step
 
-On this machine it stops with:
+Seen once on this machine, and not since:
 
 ```
 FileNotFoundError: [WinError 2] ... build\djset\djset.exe
@@ -207,13 +232,13 @@ FileNotFoundError: [WinError 2] ... build\djset\djset.exe
 
 `djset.pkg` (~13 MB) gets written but `djset.exe` is created and then vanishes.
 That is antivirus quarantining the PyInstaller bootloader — a very common false
-positive, because the bootloader is the same stub used by a lot of real malware.
-Avast is active on this machine and is already known to intercept HTTPS here.
+positive, because the bootloader is the same stub a lot of real malware uses.
+Avast is active here and is already known to intercept HTTPS on this machine.
 
-The fix is an antivirus exclusion for the build output folder
-(`dj-set-builder\build` and `dj-set-builder\dist`), added in Avast's settings.
-**Everything else works without packaging** — `djset ui` runs the app directly
-from source, which is the normal way to use it during development.
+If it recurs, the fix is an antivirus exclusion for the build output folders
+(`dj-set-builder\build` and `dj-set-builder\dist`). Packaging is in any case
+optional: `djset ui` runs the app directly from source, which is the normal way
+to use it during development.
 
 ---
 

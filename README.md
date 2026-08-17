@@ -228,6 +228,7 @@ from source, which is the normal way to use it during development.
 | `djset enrich` | fill BPM/key from the source chain. `--sample N` for a representative random sample (use this to measure coverage); `--limit N` takes the first N in storage order and is biased. `--refresh` re-attempts everything after adding a source. `--no-acousticbrainz` / `--no-deezer` / `--no-getsongbpm` disable one source |
 | `djset artists` | fetch artist genres only (slow: one request per artist) |
 | `djset coverage` | print the coverage report (`--json` for machine-readable) |
+| `djset crosscheck` | ask a second source about tracks that already have data and report disagreements. Writes nothing. `--against deezer` (default) needs no key and avoids MusicBrainz's 1 req/s; `--against acousticbrainz` compares keys but must not run alongside a full `enrich` |
 | `djset report` | sync + enrich + coverage in one go |
 | `djset generate` | sequence a set and create the playlist (`--dry-run` to preview) |
 | `djset exports` | list playlists this app has created in your account |

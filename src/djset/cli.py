@@ -10,8 +10,12 @@ import sys
 
 from . import db
 from .config import ConfigError, app_data_dir, db_path, load_config, log_path
+from .crosscheck import SAME_VALUE_TOLERANCE
 from .enrichment import (
     ATTRIBUTION_TEXT,
+    AcousticBrainzSource,
+    DeezerSource,
+    GetSongBPMSource,
     Resolver,
     default_sources,
     enrich_tracks,
@@ -349,6 +353,41 @@ def cmd_about(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_crosscheck(args: argparse.Namespace) -> int:
+    from .crosscheck import cross_check
+
+    if args.against == "getsongbpm":
+        cfg = load_config(require_getsongbpm=True)
+        challenger = GetSongBPMSource(cfg.getsongbpm_api_key, cfg.getsongbpm_rate_per_hour)
+    elif args.against == "acousticbrainz":
+        challenger = AcousticBrainzSource()
+        print(
+            "Note: AcousticBrainz goes through MusicBrainz at 1 req/s. Do not run "
+            "this alongside a full `djset enrich` — two processes sharing that "
+            "budget risks a block.\n"
+        )
+    else:
+        challenger = DeezerSource()
+
+    with db.session() as conn:
+        features = db.all_features(conn)
+        tracks = [t for t in db.sample_tracks(conn, args.sample * 4)
+                  if features.get(t.spotify_id) is not None][: args.sample]
+        if not tracks:
+            print("Nothing enriched yet — run `djset enrich` first.")
+            return 1
+
+        print(f"Putting {len(tracks)} already-resolved tracks to {args.against}…\n")
+        result = cross_check(
+            tracks, features, challenger, skip_source=challenger.name,
+            progress=_enrich_progress,
+        )
+
+    print("\n")
+    print(result.report(args.against))
+    return 0
+
+
 def cmd_manual(args: argparse.Namespace) -> int:
     from .camelot import to_camelot
     from .enrichment.base import set_manual_features
@@ -396,6 +435,28 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("coverage", help="print the coverage report")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_coverage)
+
+    sp = sub.add_parser(
+        "crosscheck",
+        help="ask a second source about tracks that already have data, and "
+        "report where the two disagree. Writes nothing.",
+    )
+    sp.add_argument(
+        "--against",
+        default="deezer",
+        choices=["deezer", "acousticbrainz", "getsongbpm"],
+        help="the second opinion. deezer is the cheap one — it needs no API "
+        "key and does not touch MusicBrainz's 1 req/s budget (default: deezer)",
+    )
+    sp.add_argument("--sample", type=int, default=150)
+    sp.add_argument(
+        "--tolerance",
+        type=float,
+        default=SAME_VALUE_TOLERANCE,
+        help=f"relative BPM difference still counted as the same value "
+        f"(default: {SAME_VALUE_TOLERANCE})",
+    )
+    sp.set_defaults(func=cmd_crosscheck)
 
     sp = sub.add_parser("report", help="sync + enrich + coverage (the step-3 gate)")
     _add_sync_args(sp)

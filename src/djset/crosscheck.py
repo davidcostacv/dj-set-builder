@@ -207,6 +207,28 @@ class CrossCheck:
         return "\n".join(L)
 
 
+def candidates_for(
+    tracks: list[Track],
+    features: dict[str, AudioFeatures],
+    *,
+    skip_source: str | None = None,
+) -> list[tuple[Track, AudioFeatures]]:
+    """The tracks actually worth a second opinion, with the data to compare.
+
+    Split out so a caller can report the real number before any requests go
+    out, instead of announcing a count that the filtering then contradicts.
+    """
+    out: list[tuple[Track, AudioFeatures]] = []
+    for track in tracks:
+        baseline = features.get(track.spotify_id)
+        if baseline is None:
+            continue  # nothing on file to compare against
+        if skip_source is not None and baseline.source == skip_source:
+            continue  # comparing a source with itself measures nothing
+        out.append((track, baseline))
+    return out
+
+
 def cross_check(
     tracks: list[Track],
     features: dict[str, AudioFeatures],
@@ -227,22 +249,22 @@ def cross_check(
     the tolerance *you* generate at — someone mixing at 12% has fewer real
     problems than someone mixing at 2%, from identical data.
     """
-    result = CrossCheck(mix_tolerance=mix_tolerance)
-    for i, track in enumerate(tracks, 1):
-        baseline = features.get(track.spotify_id)
-        if baseline is None:
-            continue
-        if skip_source is not None and baseline.source == skip_source:
-            continue
+    # Decide who is being asked *before* the loop. Filtering inside it meant
+    # `continue` skipped the progress call, so the counter jumped 1,2,3,5,6 and
+    # counted against a total that included tracks never asked about — it read
+    # like requests were failing when nothing was wrong.
+    candidates = candidates_for(tracks, features, skip_source=skip_source)
 
-        result.asked += 1
+    result = CrossCheck(mix_tolerance=mix_tolerance)
+    result.asked = len(candidates)
+    for i, (track, baseline) in enumerate(candidates, 1):
         try:
             found = challenger.lookup(track)
         except Exception as exc:  # a diagnostic must not die on one bad row
             log.warning("crosscheck: %s raised on %s: %s", challenger.name, track.title, exc)
-            continue
+            found = None
         if found is not None:
             result.add(Comparison(track, baseline, found, mix_tolerance))
         if progress is not None:
-            progress(i, len(tracks), f"{track.primary_artist} — {track.title}")
+            progress(i, len(candidates), f"{track.primary_artist} — {track.title}")
     return result

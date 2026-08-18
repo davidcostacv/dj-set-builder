@@ -133,6 +133,11 @@ def sample_tracks(
     fixed so a re-run measures the same tracks and the number is comparable
     across normalizer changes.
     """
+    if n < 0:
+        # random.sample raises a ValueError whose message ("Sample larger than
+        # population or is negative") describes neither what the caller did nor
+        # what to do about it, and it surfaced as a bare traceback.
+        raise ValueError(f"sample size cannot be negative, got {n}")
     tracks = all_tracks(conn)
     if n >= len(tracks):
         return tracks

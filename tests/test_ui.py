@@ -405,3 +405,45 @@ def test_the_pane_recovers_when_tags_do_show_up(window):
     assert [cb.text().split("  —")[0] for cb in window.genre_boxes] == ["house"]
     assert window.genre_select_all.isEnabled() is True
     assert "unavailable" not in window.genre_toggle.text().lower()
+
+
+def test_the_empty_list_is_hidden_when_the_notice_replaces_it(window):
+    """An empty bordered box under the explanation is a third of the pane
+    spent showing nothing."""
+    assert window.genre_notice.isHidden() is False
+    assert window.genre_scroll.isHidden() is True
+
+    window._artist_genres = {f"artist-t{i}": ["tech house"] for i in range(3)}
+    window._recompute()
+
+    assert window.genre_scroll.isHidden() is False
+    assert window.genre_notice.isHidden() is True
+
+
+def test_each_manual_error_names_the_field_it_belongs_to(qapp):
+    """Concatenated bare, two errors read as "Not a number. Not a key." and
+    leave the reader matching messages to fields by their order."""
+    from djset.ui.manual_features import ManualFeaturesDialog
+
+    d = ManualFeaturesDialog(_t("x"), None)
+    d.bpm_edit.setText("banana")
+    d.key_edit.setText("99Z")
+
+    hint = d.hint.text()
+    assert "<b>BPM:</b>" in hint
+    assert "<b>Key:</b>" in hint
+    assert "<br>" in hint          # one per line, not run together
+    d.close()
+
+
+def test_a_single_manual_error_still_names_its_field(qapp):
+    from djset.ui.manual_features import ManualFeaturesDialog
+
+    d = ManualFeaturesDialog(_t("x"), None)
+    d.bpm_edit.setText("128")
+    d.key_edit.setText("99Z")
+
+    hint = d.hint.text()
+    assert "<b>Key:</b>" in hint
+    assert "<b>BPM:</b>" not in hint
+    d.close()

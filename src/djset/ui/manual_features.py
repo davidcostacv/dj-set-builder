@@ -151,10 +151,17 @@ class ManualFeaturesDialog(QDialog):
 
     def _revalidate(self) -> None:
         p = self.parsed()
-        problems = [e for e in (p.bpm_error, p.key_error) if e]
+        # Name the field each problem belongs to. Concatenated bare, two
+        # errors read as "Not a number. Not a key." and leave the reader
+        # matching messages to fields by their order.
+        problems = [
+            f"<b>{field}:</b> {message}"
+            for field, message in (("BPM", p.bpm_error), ("Key", p.key_error))
+            if message
+        ]
         if problems:
             self.hint.setText(
-                "<span style='color:#c0392b'>" + " ".join(problems) + "</span>"
+                "<span style='color:#c0392b'>" + "<br>".join(problems) + "</span>"
             )
         elif p.key_camelot:
             # Echo the resolved code so a typed "Am" visibly becomes 8A.

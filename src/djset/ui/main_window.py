@@ -184,10 +184,10 @@ class MainWindow(QMainWindow):
         self.genre_list = QWidget()
         self.genre_layout = QVBoxLayout(self.genre_list)
         self.genre_layout.setAlignment(Qt.AlignTop)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(self.genre_list)
-        body.addWidget(scroll)
+        self.genre_scroll = QScrollArea()
+        self.genre_scroll.setWidgetResizable(True)
+        self.genre_scroll.setWidget(self.genre_list)
+        body.addWidget(self.genre_scroll)
 
         self.genre_body.setVisible(False)
         lay.addWidget(self.genre_body)
@@ -422,12 +422,16 @@ class MainWindow(QMainWindow):
                 f"<b>{availability.headline}</b><br>{availability.detail}"
             )
             self.genre_notice.setVisible(True)
+            # Hide the list itself too. Leaving an empty bordered box below the
+            # explanation is a third of the pane spent showing nothing.
+            self.genre_scroll.setVisible(False)
             self.genre_select_all.setEnabled(False)
             self.genre_clear.setEnabled(False)
             self._refresh_genre_toggle()
             return
 
         self.genre_notice.setVisible(False)
+        self.genre_scroll.setVisible(True)
         self.genre_select_all.setEnabled(True)
         self.genre_clear.setEnabled(True)
 

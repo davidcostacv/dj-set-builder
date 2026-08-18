@@ -127,6 +127,16 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         deezer=not args.no_deezer,
     )
     resolver = Resolver(sources)
+    if not resolver.sources:
+        # Every source disabled by a flag. Left alone this ran to completion and
+        # reported resolved=0 missed=0, which looks like a clean result rather
+        # than a run that could never have found anything.
+        print(
+            "No sources enabled — every one was switched off by a flag, so "
+            "there is nothing to ask. Drop one of --no-getsongbpm / "
+            "--no-acousticbrainz / --no-deezer."
+        )
+        return 2
     print("Sources: " + ", ".join(f"{s.name}({s.priority})" for s in resolver.sources))
 
     with db.session() as conn:
@@ -353,6 +363,24 @@ def cmd_about(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sample_size(raw: str) -> int:
+    """Reject a sample that cannot mean anything, before any work starts.
+
+    `--sample -5` used to reach random.sample and surface as a bare traceback;
+    `--sample 0` reached the end of a run and reported "nothing enriched yet",
+    blaming the library for an empty argument.
+    """
+    try:
+        value = int(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{raw!r} is not a whole number")
+    if value < 1:
+        raise argparse.ArgumentTypeError(
+            f"{value} is not a usable sample size — ask for at least 1 track"
+        )
+    return value
+
+
 def _tolerance(raw: str) -> float:
     """Reject a tolerance that cannot mean anything, naming the bound."""
     try:
@@ -368,7 +396,7 @@ def _tolerance(raw: str) -> float:
 
 
 def cmd_crosscheck(args: argparse.Namespace) -> int:
-    from .crosscheck import cross_check
+    from .crosscheck import candidates_for, cross_check
 
     if args.against == "getsongbpm":
         cfg = load_config(require_getsongbpm=True)
@@ -385,13 +413,30 @@ def cmd_crosscheck(args: argparse.Namespace) -> int:
 
     with db.session() as conn:
         features = db.all_features(conn)
-        tracks = [t for t in db.sample_tracks(conn, args.sample * 4)
-                  if features.get(t.spotify_id) is not None][: args.sample]
-        if not tracks:
-            print("Nothing enriched yet — run `djset enrich` first.")
+        sampled = [
+            t
+            for t in db.sample_tracks(conn, args.sample * 4)
+            if features.get(t.spotify_id) is not None
+        ][: args.sample]
+        # Resolve the real candidate list before announcing a number, so the
+        # count printed here is the one actually asked about rather than one
+        # the filtering immediately contradicts.
+        pairs = candidates_for(sampled, features, skip_source=challenger.name)
+        if not pairs:
+            if not features:
+                print("Nothing enriched yet — run `djset enrich` first.")
+            elif not db.all_tracks(conn):
+                print("No tracks in the local DB — run `djset sync` first.")
+            else:
+                print(
+                    f"This sample turned up nothing to compare — {len(features)} "
+                    f"tracks have data, but none drawn came from a source other "
+                    f"than {args.against}. Try a larger --sample."
+                )
             return 1
 
-        print(f"Putting {len(tracks)} already-resolved tracks to {args.against}…\n")
+        tracks = [t for t, _ in pairs]
+        print(f"Putting {len(tracks)} tracks to {args.against}…\n")
         result = cross_check(
             tracks, features, challenger, skip_source=challenger.name,
             mix_tolerance=args.tolerance, progress=_enrich_progress,
@@ -462,7 +507,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="the second opinion. deezer is the cheap one — it needs no API "
         "key and does not touch MusicBrainz's 1 req/s budget (default: deezer)",
     )
-    sp.add_argument("--sample", type=int, default=150)
+    sp.add_argument("--sample", type=_sample_size, default=150)
     sp.add_argument(
         "--tolerance",
         type=_tolerance,
@@ -538,10 +583,12 @@ def _add_sync_args(sp: argparse.ArgumentParser) -> None:
 
 
 def _add_enrich_args(sp: argparse.ArgumentParser) -> None:
-    sp.add_argument("--limit", type=int, help="only process the first N tracks")
+    sp.add_argument(
+        "--limit", type=_sample_size, help="only process the first N tracks"
+    )
     sp.add_argument(
         "--sample",
-        type=int,
+        type=_sample_size,
         help="process a deterministic random sample of N tracks — use this to "
         "measure coverage, not --limit",
     )

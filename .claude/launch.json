@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "djset-web",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "djset.cli", "serve", "--port", "8765"],
+      "port": 8765
+    }
+  ]
+}

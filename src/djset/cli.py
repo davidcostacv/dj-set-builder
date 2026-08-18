@@ -353,6 +353,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if all(p.matches for p in probes) else 2
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Serve the browser interface. Loopback only for now."""
+    try:
+        from .web import serve
+    except ImportError as exc:
+        print(f"The web interface needs fastapi and uvicorn: {exc}")
+        print("  pip install fastapi uvicorn")
+        return 1
+    print(f"djset web on http://{args.host}:{args.port}  (Ctrl+C to stop)")
+    return serve(host=args.host, port=args.port, reload=args.reload)
+
+
 def cmd_about(args: argparse.Namespace) -> int:
     from .config import _track_count, is_store_python, redirected_candidates
 
@@ -587,6 +599,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("doctor", help="probe the API surface against the build brief")
     sp.set_defaults(func=cmd_doctor)
+
+    sp = sub.add_parser("serve", help="serve the browser interface at localhost")
+    sp.add_argument("--host", default="127.0.0.1")
+    sp.add_argument("--port", type=int, default=8000)
+    sp.add_argument("--reload", action="store_true", help="reload on source changes")
+    sp.set_defaults(func=cmd_serve)
 
     sp = sub.add_parser("about", help="paths and required attribution")
     sp.set_defaults(func=cmd_about)

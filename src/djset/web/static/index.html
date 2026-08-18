@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>djset</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<header>
+  <h1>djset</h1>
+  <div id="health" class="muted">loading…</div>
+</header>
+
+<main>
+  <!-- 1 -->
+  <section class="pane" id="pane-sources">
+    <h2>1 · Sources</h2>
+    <input type="search" id="source-filter" placeholder="Filter playlists…" autocomplete="off">
+    <div id="sources" class="scroll" role="group" aria-label="Playlists"></div>
+    <p id="sources-summary" class="summary">No source selected</p>
+  </section>
+
+  <!-- 2 -->
+  <section class="pane" id="pane-genres">
+    <h2>2 · Genre filter <span class="muted">(optional)</span></h2>
+    <button id="genre-toggle" class="toggle" aria-expanded="false">Show genres ▸</button>
+    <div id="genre-body" hidden>
+      <div class="row">
+        <button id="genre-all" class="small">Select all</button>
+        <button id="genre-none" class="small">Clear</button>
+      </div>
+      <p id="genre-notice" class="notice" hidden></p>
+      <div id="genres" class="scroll" role="group" aria-label="Genres"></div>
+    </div>
+    <p id="eligible" class="summary">—</p>
+  </section>
+
+  <!-- 3 -->
+  <section class="pane" id="pane-generate">
+    <h2>3 · Generate</h2>
+
+    <fieldset>
+      <legend>Sequence by</legend>
+      <label><input type="radio" name="mode" value="bpm"> BPM</label>
+      <label><input type="radio" name="mode" value="key"> Key</label>
+      <label><input type="radio" name="mode" value="bpm+key" checked> BPM + Key</label>
+    </fieldset>
+
+    <label class="field">BPM tolerance
+      <input type="number" id="tolerance" min="0.02" max="0.12" step="0.01" value="0.06">
+    </label>
+
+    <label class="check"><input type="checkbox" id="half-double" checked>
+      Match half/double time (70 ↔ 140)</label>
+    <label class="check"><input type="checkbox" id="energy-boost">
+      Allow energy-boost transitions (+7)</label>
+
+    <div class="row">
+      <label class="field grow">Target
+        <input type="number" id="target-value" min="1" value="20">
+      </label>
+      <label class="field grow">&nbsp;
+        <select id="target-kind">
+          <option value="tracks">tracks</option>
+          <option value="minutes">minutes</option>
+          <option value="all">whole selection</option>
+        </select>
+      </label>
+    </div>
+
+    <label class="field">Playlist name
+      <input type="text" id="playlist-name" placeholder="BPM+KEY · 20 tracks">
+    </label>
+    <label class="check"><input type="checkbox" id="public"> Make public</label>
+
+    <button id="generate" class="primary" disabled>Generate set</button>
+    <p class="muted small-print">Sequences only. Saving to Spotify is the next step.</p>
+  </section>
+
+  <!-- 4 -->
+  <section class="pane wide" id="pane-result">
+    <h2>4 · Result</h2>
+    <p id="result-status" class="summary">No set generated yet.</p>
+    <div class="row">
+      <button id="save" class="primary" disabled>Save to Spotify</button>
+      <button id="copy" disabled>Copy link</button>
+      <button id="open" disabled>Open in Spotify</button>
+      <button id="update" disabled>Update playlist</button>
+    </div>
+    <p id="link" class="link"></p>
+    <div class="scroll grow-tall">
+      <table id="result">
+        <thead><tr>
+          <th>#</th><th>Title</th><th>Artist</th>
+          <th class="num">BPM</th><th class="num">Key</th><th>Transition</th><th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="result-summary" class="summary"></p>
+  </section>
+</main>
+
+<div id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

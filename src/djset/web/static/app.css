@@ -152,3 +152,32 @@ tbody tr { cursor: grab; }
   box-shadow: 0 6px 24px rgba(0, 0, 0, .5);
 }
 #toast.bad { border-color: var(--bad); color: var(--bad); }
+
+
+/* the job bar: sync and enrich are long, so they get a permanent place
+   rather than a toast that vanishes before the job does */
+.spacer { flex: 1; }
+
+#job {
+  padding: .5rem 1rem;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+}
+.job-line { display: flex; align-items: center; gap: .6rem; font-size: .82rem; }
+.job-line strong { text-transform: capitalize; }
+#job-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46vw; }
+
+.bar { height: 4px; background: var(--border); border-radius: 2px; margin-top: .4rem; overflow: hidden; }
+#job-bar { height: 100%; width: 0; background: var(--accent); transition: width .3s ease; }
+#job.done #job-bar { background: var(--good); }
+#job.failed #job-bar { background: var(--bad); }
+
+/* No total yet: sync counts lines, and enrich has not finished working out
+   how many tracks are pending. A full bar would read as finished. */
+#job.indeterminate #job-bar {
+  background: linear-gradient(90deg,
+    var(--border) 0%, var(--accent) 50%, var(--border) 100%);
+  background-size: 200% 100%;
+  animation: sweep 1.4s linear infinite;
+}
+@keyframes sweep { from { background-position: 200% 0; } to { background-position: -200% 0; } }

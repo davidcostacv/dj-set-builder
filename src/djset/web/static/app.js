@@ -299,14 +299,121 @@ function escapeHtml(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-async function boot() {
+// ---------------------------------------------------------------------------
+// long jobs
+// ---------------------------------------------------------------------------
+
+let jobTimer = null;
+
+function renderJob(j) {
+  const box = $("job");
+  const idle = !j.running && !j.kind;
+  if (idle) { box.hidden = true; return; }
+
+  box.hidden = false;
+  box.classList.toggle("done", !j.running && !j.error);
+  box.classList.toggle("failed", Boolean(j.error));
+  if (!j.running) box.classList.remove("indeterminate");
+  $("job-kind").textContent = j.kind;
+  $("job-cancel").disabled = !j.running;
+
+  if (j.error) {
+    $("job-label").textContent = j.error;
+    $("job-eta").textContent = "";
+    $("job-bar").style.width = "100%";
+    return;
+  }
+  if (!j.running) {
+    $("job-label").textContent = j.summary || (j.cancelled ? "cancelled" : "done");
+    $("job-eta").textContent = `${Math.round(j.elapsed)}s`;
+    $("job-bar").style.width = "100%";
+    return;
+  }
+
+  $("job-label").textContent = j.label || "working…";
+  // A job with no total is indeterminate: sync reports by line, and enrich has
+  // not finished counting yet. Filling the bar there reads as *finished*, so
+  // it gets a moving stripe instead of a width.
+  const indeterminate = !j.total;
+  $("job").classList.toggle("indeterminate", indeterminate);
+  $("job-bar").style.width = indeterminate ? "100%" : `${j.percent}%`;
+  const counter = j.total ? `${j.done}/${j.total}` : `${j.done}`;
+  $("job-eta").textContent = j.eta_seconds !== null
+    ? `${counter} · ${humanise(j.eta_seconds)} left`
+    : counter;
+}
+
+function humanise(seconds) {
+  if (seconds < 90) return `${Math.round(seconds)}s`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)} min`;
+  return `${(seconds / 3600).toFixed(1)} h`;
+}
+
+async function pollJob() {
   try {
+    const j = await api("/api/job");
+    renderJob(j);
+    if (j.running) return;                     // keep polling
+    clearInterval(jobTimer);
+    jobTimer = null;
+    setJobButtons(true);
+    // The database has moved on, so the held library and the panes must too.
     const h = await api("/api/health");
-    $("health").textContent =
-      `${h.tracks.toLocaleString()} tracks · ${h.playlists} playlists · ` +
-      `${h.sequenceable.toLocaleString()} with BPM+key`;
+    showHealth(h);
     state.sources = await api("/api/sources");
     await refreshSelection();
+    if (j.summary) toast(`${j.kind}: ${j.summary}`);
+    if (j.error) toast(`${j.kind} failed: ${j.error}`, true);
+  } catch (err) {
+    clearInterval(jobTimer);
+    jobTimer = null;
+    setJobButtons(true);
+    toast(err.message, true);
+  }
+}
+
+function watchJob() {
+  setJobButtons(false);
+  if (jobTimer) clearInterval(jobTimer);
+  jobTimer = setInterval(pollJob, 1000);
+  pollJob();
+}
+
+function setJobButtons(enabled) {
+  $("do-sync").disabled = !enabled;
+  $("do-enrich").disabled = !enabled;
+}
+
+async function startJob(path, body) {
+  try {
+    renderJob(await api(path, body ?? {}));
+    watchJob();
+  } catch (err) {
+    // A refusal means one is already running — started from another tab, or
+    // before this page was opened. Attach to it rather than going quiet and
+    // re-enabling the buttons, which left a running job invisible.
+    toast(err.message, true);
+    const j = await api("/api/job").catch(() => null);
+    if (j && j.running) { renderJob(j); watchJob(); } else { setJobButtons(true); }
+  }
+}
+
+function showHealth(h) {
+  $("health").textContent =
+    `${h.tracks.toLocaleString()} tracks · ${h.playlists} playlists · ` +
+    `${h.sequenceable.toLocaleString()} with BPM+key`;
+}
+
+async function boot() {
+  try {
+    showHealth(await api("/api/health"));
+    state.sources = await api("/api/sources");
+    await refreshSelection();
+    // A job may already be running — started before this page was opened, or
+    // by another tab. Pick it up rather than pretending nothing is happening.
+    const j = await api("/api/job");
+    renderJob(j);
+    if (j.running) watchJob();
   } catch (err) {
     $("health").textContent = "could not reach the server";
     toast(err.message, true);
@@ -341,3 +448,12 @@ document.querySelectorAll('input[name=mode]').forEach((r) =>
   r.addEventListener("change", refreshName));
 
 boot();
+
+$("do-sync").addEventListener("click", () => startJob("/api/job/sync"));
+$("do-enrich").addEventListener("click", () =>
+  startJob("/api/job/enrich", { retry_misses: true }));
+$("job-cancel").addEventListener("click", async () => {
+  $("job-cancel").disabled = true;
+  await api("/api/job/cancel", {});
+  toast("Stopping at the next checkpoint — progress is kept.");
+});

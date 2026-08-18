@@ -11,7 +11,21 @@
 <header>
   <h1>djset</h1>
   <div id="health" class="muted">loading…</div>
+  <div class="spacer"></div>
+  <button id="do-sync" class="small">Sync library</button>
+  <button id="do-enrich" class="small">Enrich BPM/key</button>
 </header>
+
+<div id="job" hidden>
+  <div class="job-line">
+    <strong id="job-kind"></strong>
+    <span id="job-label" class="muted"></span>
+    <span class="spacer"></span>
+    <span id="job-eta" class="muted"></span>
+    <button id="job-cancel" class="small">Cancel</button>
+  </div>
+  <div class="bar"><div id="job-bar"></div></div>
+</div>
 
 <main>
   <!-- 1 -->

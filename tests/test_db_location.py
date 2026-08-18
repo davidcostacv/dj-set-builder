@@ -134,3 +134,55 @@ def test_the_decision_is_made_once(tmp_path, monkeypatch):
     for _ in range(5):
         config.db_path()
     assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# connecting must not write
+# ---------------------------------------------------------------------------
+
+
+def test_setup_runs_once_per_database_not_once_per_connection(tmp_path, monkeypatch):
+    """connect() used to run the schema, the migration, the alias seed and a
+    commit every time — a write transaction taken by every *reader*. Against a
+    running enrichment that meant constant lock contention, and on the
+    sandboxed path it failed outright with SQLITE_PROTOCOL."""
+    monkeypatch.setenv("DJSET_DB_PATH", str(tmp_path / "once.sqlite3"))
+    from djset import db
+
+    first = db.connect(tmp_path / "once.sqlite3")
+    assert first.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    first.close()
+
+    # A second open must touch nothing: make the schema unreadable and it
+    # should still connect, which it could not do if it re-ran the script.
+    monkeypatch.setattr(
+        db, "SCHEMA", tmp_path / "definitely-not-here.sql"
+    )
+    second = db.connect(tmp_path / "once.sqlite3")
+    assert second.execute("SELECT COUNT(*) FROM tracks").fetchone()[0] == 0
+    second.close()
+
+
+def test_a_fresh_database_is_still_created(tmp_path, monkeypatch):
+    monkeypatch.setenv("DJSET_DB_PATH", str(tmp_path / "fresh.sqlite3"))
+    from djset import db
+
+    conn = db.connect(tmp_path / "fresh.sqlite3")
+    tables = {
+        r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    assert {"tracks", "playlist_tracks", "audio_features"} <= tables
+    conn.close()
+
+
+def test_a_version_bump_reapplies_setup(tmp_path, monkeypatch):
+    """The mechanism that lets a schema change reach an existing database."""
+    monkeypatch.setenv("DJSET_DB_PATH", str(tmp_path / "bump.sqlite3"))
+    from djset import db
+
+    db.connect(tmp_path / "bump.sqlite3").close()
+    monkeypatch.setattr(db, "SCHEMA_VERSION", db.SCHEMA_VERSION + 1)
+
+    conn = db.connect(tmp_path / "bump.sqlite3")
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    conn.close()

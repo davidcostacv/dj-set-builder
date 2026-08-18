@@ -23,6 +23,11 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# Bump when schema.sql or _ADDED_COLUMNS changes, so an existing database
+# picks the change up. Without a bump the setup below is skipped entirely.
+SCHEMA_VERSION = 1
+
+
 def connect(path: Path | None = None) -> sqlite3.Connection:
     p = path or db_path()
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -32,11 +37,24 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     # (or the Qt main thread and its worker) touching the DB at once is normal,
     # not exceptional: a long enrichment pass holds the write lock in bursts.
     conn.execute(f"PRAGMA busy_timeout = {int(BUSY_TIMEOUT_S * 1000)}")
+
+    # Setup runs once per database, not once per connection. It used to run
+    # every time: executescript, the column migration, the alias seed and a
+    # commit, which is a *write* transaction taken by every reader. Against a
+    # running enrichment that meant constant lock contention, and on the
+    # sandboxed path it failed outright with SQLITE_PROTOCOL — a web request
+    # could not open the library while a pass was writing to it.
+    if conn.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+        _initialise(conn)
+    return conn
+
+
+def _initialise(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA.read_text(encoding="utf-8"))
     _migrate(conn)
     _seed_genre_aliases(conn)
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
-    return conn
 
 
 # Columns added after the first release. CREATE TABLE IF NOT EXISTS will not

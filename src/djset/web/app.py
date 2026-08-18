@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from .. import db
 from ..config import ConfigError, db_path, load_config
+from ..enrichment import Resolver, default_sources, enrich_tracks
 from ..export import ExportError, export_to_spotify, update_playlist_order
 from ..filtering import (
     filter_tracks,
@@ -35,6 +36,8 @@ from ..models import Track
 from ..sequencing import SequenceMode, SequenceOptions, build_set
 from ..spotify.auth import SpotifyAuth
 from ..spotify.client import SpotifyClient
+from ..spotify.sync import sync_artists, sync_playlists
+from .jobs import runner
 
 log = logging.getLogger(__name__)
 
@@ -107,6 +110,7 @@ class Library:
 
 
 library = Library()
+runner.on_finished = library.load
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +338,98 @@ def reorder(playlist_id: str, body: ExportIn) -> dict[str, Any]:
     except ExportError as exc:
         raise HTTPException(502, str(exc))
     return {"ok": True, "tracks": len(body.uris)}
+
+
+# ---------------------------------------------------------------------------
+# long jobs
+# ---------------------------------------------------------------------------
+
+
+class EnrichIn(BaseModel):
+    retry_misses: bool = True
+    sample: int | None = None
+    acousticbrainz: bool = True
+    deezer: bool = True
+
+
+@app.get("/api/job")
+def job_state() -> dict[str, Any]:
+    return runner.state.as_dict()
+
+
+@app.post("/api/job/cancel")
+def job_cancel() -> dict[str, Any]:
+    stopped = runner.cancel()
+    return {"cancelling": stopped, "job": runner.state.as_dict()}
+
+
+@app.post("/api/job/sync")
+def job_sync() -> dict[str, Any]:
+    def work(progress, cancel) -> str:
+        with db.session() as conn:
+            client = SpotifyClient(SpotifyAuth(load_config()))
+            seen = [0]
+
+            def note(message: str) -> None:
+                # sync reports by line rather than by count; show the line and
+                # let the counter climb so the UI still looks alive.
+                seen[0] += 1
+                progress(seen[0], 0, str(message)[:90])
+
+            result = sync_playlists(conn, client, progress=note)
+            sync_artists(conn, client, progress=note)
+        unreadable = f", {len(result.unreadable)} unreadable" if result.unreadable else ""
+        return (
+            f"{len(result.counts)} source(s), {result.tracks_seen} rows, "
+            f"{result.unchanged} unchanged{unreadable}"
+        )
+
+    started, state = runner.start("sync", work)
+    if not started:
+        raise HTTPException(409, f"A {state.kind} job is already running.")
+    return state.as_dict()
+
+
+@app.post("/api/job/enrich")
+def job_enrich(body: EnrichIn) -> dict[str, Any]:
+    """Fill BPM and key. Long — hours for a full library — and that is why it
+    lives here: held by the server it runs to completion instead of dying with
+    whatever shell started it."""
+    try:
+        cfg = load_config(require_getsongbpm=False)
+    except ConfigError as exc:
+        raise HTTPException(500, str(exc))
+
+    sources = default_sources(
+        cfg.getsongbpm_api_key,
+        cfg.getsongbpm_rate_per_hour,
+        acousticbrainz=body.acousticbrainz,
+        deezer=body.deezer,
+    )
+    if not sources:
+        raise HTTPException(400, "No sources enabled — nothing to ask.")
+
+    def work(progress, cancel) -> str:
+        with db.session() as conn:
+            tracks = db.sample_tracks(conn, body.sample) if body.sample else None
+            stats = enrich_tracks(
+                conn,
+                Resolver(sources),
+                tracks,
+                cancel=cancel,
+                progress=progress,
+                retry_misses=body.retry_misses,
+            )
+        return (
+            f"considered={stats.considered} resolved={stats.resolved} "
+            f"missed={stats.missed} cached={stats.already_cached}"
+            + (" (cancelled)" if stats.cancelled else "")
+        )
+
+    started, state = runner.start("enrich", work)
+    if not started:
+        raise HTTPException(409, f"A {state.kind} job is already running.")
+    return state.as_dict()
 
 
 # ---------------------------------------------------------------------------

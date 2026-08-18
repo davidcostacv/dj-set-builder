@@ -86,10 +86,10 @@ And the web build, in order:
 
 | Step | | |
 |---|---|---|
-| W1 | HTTP layer over the existing engine (`djset serve`) | in progress |
-| W2 | Browser front end: the four panes | in progress |
-| W3 | Generate + save, driven from the browser | |
-| W4 | Sync and enrich as background jobs with live progress | |
+| W1 | HTTP layer over the existing engine (`djset serve`) | done |
+| W2 | Browser front end: the four panes | done |
+| W3 | Generate + save, driven from the browser | done |
+| W4 | Sync and enrich as background jobs with live progress | done |
 | W5 | OAuth against a non-loopback redirect | |
 | W6 | Deploy, with the database and secrets on the server | |
 

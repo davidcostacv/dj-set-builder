@@ -38,7 +38,7 @@ def make_db(path, tracks: int) -> None:
 def test_an_explicit_override_beats_every_heuristic(tmp_path, monkeypatch):
     wanted = tmp_path / "pinned.sqlite3"
     monkeypatch.setenv("DJSET_DB_PATH", str(wanted))
-    monkeypatch.setattr(config, "_redirected_candidates", lambda: [tmp_path / "big.sqlite3"])
+    monkeypatch.setattr(config, "redirected_candidates", lambda: [tmp_path / "big.sqlite3"])
     make_db(tmp_path / "big.sqlite3", 9999)
 
     assert config.db_path() == wanted
@@ -53,7 +53,7 @@ def test_a_full_sandbox_copy_beats_an_empty_canonical_one(tmp_path, monkeypatch)
     make_db(redirected, 9802)
 
     monkeypatch.setattr(config, "app_data_dir", lambda: canonical.parent)
-    monkeypatch.setattr(config, "_redirected_candidates", lambda: [redirected])
+    monkeypatch.setattr(config, "redirected_candidates", lambda: [redirected])
 
     assert config.db_path() == redirected
 
@@ -67,7 +67,7 @@ def test_the_canonical_one_is_kept_when_it_is_the_fuller(tmp_path, monkeypatch):
     make_db(redirected, 12)
 
     monkeypatch.setattr(config, "app_data_dir", lambda: canonical.parent)
-    monkeypatch.setattr(config, "_redirected_candidates", lambda: [redirected])
+    monkeypatch.setattr(config, "redirected_candidates", lambda: [redirected])
 
     assert config.db_path() == canonical
 
@@ -79,7 +79,7 @@ def test_a_tie_prefers_the_canonical_path(tmp_path, monkeypatch):
     make_db(redirected, 50)
 
     monkeypatch.setattr(config, "app_data_dir", lambda: canonical.parent)
-    monkeypatch.setattr(config, "_redirected_candidates", lambda: [redirected])
+    monkeypatch.setattr(config, "redirected_candidates", lambda: [redirected])
 
     assert config.db_path() == canonical
 
@@ -88,7 +88,7 @@ def test_no_sandbox_copy_is_the_ordinary_case(tmp_path, monkeypatch):
     canonical = tmp_path / "canonical" / "djset.sqlite3"
     make_db(canonical, 10)
     monkeypatch.setattr(config, "app_data_dir", lambda: canonical.parent)
-    monkeypatch.setattr(config, "_redirected_candidates", lambda: [])
+    monkeypatch.setattr(config, "redirected_candidates", lambda: [])
 
     assert config.db_path() == canonical
 
@@ -97,7 +97,7 @@ def test_a_first_run_with_nothing_anywhere_still_returns_a_path(tmp_path, monkey
     canonical = tmp_path / "canonical" / "djset.sqlite3"
     canonical.parent.mkdir(parents=True)
     monkeypatch.setattr(config, "app_data_dir", lambda: canonical.parent)
-    monkeypatch.setattr(config, "_redirected_candidates", lambda: [])
+    monkeypatch.setattr(config, "redirected_candidates", lambda: [])
 
     assert config.db_path() == canonical
 
@@ -110,7 +110,7 @@ def test_a_corrupt_candidate_does_not_win_and_does_not_raise(tmp_path, monkeypat
     junk.write_bytes(b"not a database at all")
 
     monkeypatch.setattr(config, "app_data_dir", lambda: canonical.parent)
-    monkeypatch.setattr(config, "_redirected_candidates", lambda: [junk])
+    monkeypatch.setattr(config, "redirected_candidates", lambda: [junk])
 
     assert config.db_path() == canonical
     assert config._track_count(junk) == -1
@@ -129,7 +129,7 @@ def test_the_decision_is_made_once(tmp_path, monkeypatch):
         calls.append(1)
         return []
 
-    monkeypatch.setattr(config, "_redirected_candidates", counted)
+    monkeypatch.setattr(config, "redirected_candidates", counted)
 
     for _ in range(5):
         config.db_path()

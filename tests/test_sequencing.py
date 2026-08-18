@@ -357,3 +357,79 @@ def test_scales_to_a_realistic_pool():
     assert len(res.tracks) == 25
     ids = [t.spotify_id for t in res.tracks]
     assert len(ids) == len(set(ids))
+
+
+# ---------------------------------------------------------------------------
+# an original and its own remix must not sit next to each other
+# ---------------------------------------------------------------------------
+
+
+def _versions():
+    """Two versions of one song plus a filler, all mutually compatible."""
+    tracks = [
+        Track("a", "spotify:track:a", "We Are The People", "Empire Of The Sun",
+              artist_names=["Empire Of The Sun"], duration_ms=200_000),
+        Track("b", "spotify:track:b", "We Are The People - ARTBAT Remix",
+              "Empire Of The Sun, ARTBAT",
+              artist_names=["Empire Of The Sun", "ARTBAT"], duration_ms=200_000),
+        Track("c", "spotify:track:c", "Something Else", "Another Band",
+              artist_names=["Another Band"], duration_ms=200_000),
+    ]
+    feats = {
+        t.spotify_id: AudioFeatures(t.spotify_id, 123.0, "9A", source="test")
+        for t in tracks
+    }
+    return tracks, feats
+
+
+def test_the_two_versions_are_recognised_as_one_song():
+    from djset.filtering import song_family
+
+    tracks, _ = _versions()
+    assert song_family(tracks[0]) == song_family(tracks[1])
+    assert song_family(tracks[0]) != song_family(tracks[2])
+
+
+def test_a_remix_never_follows_its_own_original():
+    """Observed in a real 18-track set: rows 1 and 2 were "We Are The People"
+    and its ARTBAT remix, back to back. Dedupe keeps both on purpose — a remix
+    is a different recording — but consecutively it is the same song twice."""
+    tracks, feats = _versions()
+    result = build_set(
+        tracks, feats, SequenceOptions(mode=SequenceMode.BPM_KEY, target_tracks=3)
+    )
+
+    ids = [t.spotify_id for t in result.tracks]
+    for first, second in zip(ids, ids[1:]):
+        assert {first, second} != {"a", "b"}, f"versions adjacent in {ids}"
+
+
+def test_both_versions_are_still_eligible():
+    """The rule separates them; it must not drop either."""
+    tracks, feats = _versions()
+    result = build_set(
+        tracks, feats,
+        SequenceOptions(mode=SequenceMode.BPM_KEY, use_all=True),
+    )
+    assert len(result.tracks) == 3
+
+
+def test_reorder_everything_also_keeps_them_apart():
+    tracks, feats = _versions()
+    result = build_set(
+        tracks, feats, SequenceOptions(mode=SequenceMode.BPM_KEY, use_all=True)
+    )
+    ids = [t.spotify_id for t in result.tracks]
+    for first, second in zip(ids, ids[1:]):
+        assert {first, second} != {"a", "b"}, f"versions adjacent in {ids}"
+
+
+def test_two_versions_alone_are_still_both_placed():
+    """With nothing to separate them the set must not silently lose one."""
+    tracks, feats = _versions()
+    pair = tracks[:2]
+    result = build_set(
+        pair, {k: v for k, v in feats.items() if k in ("a", "b")},
+        SequenceOptions(mode=SequenceMode.BPM_KEY, use_all=True),
+    )
+    assert len(result.tracks) == 2

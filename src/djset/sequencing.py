@@ -17,7 +17,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from .camelot import parse_camelot
-from .filtering import dedupe_recordings
+from .filtering import dedupe_recordings, song_family
 from .models import AudioFeatures, Track
 
 # ---------------------------------------------------------------------------
@@ -277,6 +277,10 @@ class TrackGraph:
         self.features = features
         self.feat = [features[t.spotify_id] for t in self.tracks]
 
+        # Which song each node is a version of, computed once. Used to keep an
+        # original and its own remix from landing next to each other.
+        self._family = [song_family(t) for t in self.tracks]
+
         self._by_key: dict[str, list[int]] = {}
         for i, f in enumerate(self.feat):
             if f.key_camelot:
@@ -324,6 +328,15 @@ class TrackGraph:
         if by_bpm is not None:
             return by_bpm
         return set(range(len(self.tracks)))
+
+    def same_song(self, i: int, j: int) -> bool:
+        """Whether two nodes are versions of one song.
+
+        Deliberately *not* a reason to drop either — a remix is a different
+        recording and belongs in the pool. It is only a reason not to play them
+        consecutively, which is the same song twice however different the tempo.
+        """
+        return self._family[i] == self._family[j]
 
     def neighbours(self, i: int) -> list[tuple[int, Transition]]:
         cached = self._cache.get(i)
@@ -490,6 +503,11 @@ def build_set(
                 for j, tr in graph.neighbours(beam.path[-1]):
                     if j in beam.used:
                         continue
+                    if graph.same_song(beam.path[-1], j):
+                        # An original followed by its own remix is the same
+                        # song twice, however different the tempo. Dedupe keeps
+                        # both on purpose; adjacency is what makes it obvious.
+                        continue
                     dips = beam.dips
                     if tr.energy_delta is not None and tr.energy_delta < -ENERGY_DIP:
                         # Prefer a gentle upward arc; allow one dip, and only
@@ -579,12 +597,19 @@ def _place_remaining(
 
     while remaining:
         tail = out[-1]
-        # A legal continuation is always better than a forced one.
-        legal = [(j, tr) for j, tr in graph.neighbours(tail) if j in set(remaining)]
-        if legal:
+        left = set(remaining)
+        # A legal continuation is always better than a forced one, and a
+        # different song is better than either — an original followed by its
+        # own remix is the same song twice.
+        legal = [(j, tr) for j, tr in graph.neighbours(tail) if j in left]
+        fresh = [(j, tr) for j, tr in legal if not graph.same_song(tail, j)]
+        if fresh:
+            j = max(fresh, key=lambda p: p[1].quality)[0]
+        elif legal:
             j = max(legal, key=lambda p: p[1].quality)[0]
         else:
-            j = min(remaining, key=lambda k: _soft_distance(graph.feat[tail], graph.feat[k]))
+            others = [k for k in remaining if not graph.same_song(tail, k)] or remaining
+            j = min(others, key=lambda k: _soft_distance(graph.feat[tail], graph.feat[k]))
             compromises += 1
         out.append(j)
         remaining.remove(j)

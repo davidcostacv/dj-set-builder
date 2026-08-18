@@ -354,10 +354,35 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_about(args: argparse.Namespace) -> int:
+    from .config import _track_count, is_store_python, redirected_candidates
+
+    resolved = db_path()
     print("djset - personal Spotify playlist & DJ set generator")
     print(f"  data dir : {app_data_dir()}")
-    print(f"  database : {db_path()}")
+    print(f"  database : {resolved}")
+    if resolved.exists():
+        size = resolved.stat().st_size / 1_048_576
+        print(f"             {_track_count(resolved)} tracks, {size:.1f} MB")
+    else:
+        print("             (does not exist yet — run `djset sync`)")
     print(f"  log file : {log_path()}")
+
+    # The path above is not always where the bytes are. Say so, because the
+    # symptom otherwise is an app that reports a directory you can open and
+    # find empty.
+    if is_store_python():
+        print()
+        print("  NOTE: this is Microsoft Store Python. Windows sandboxes it and")
+        print("  redirects writes under %LOCALAPPDATA% into its own LocalCache,")
+        print("  so the path above is not where the file physically lives. This")
+        print("  process reads it back transparently; a packaged build does not.")
+    others = [c for c in redirected_candidates() if c != resolved]
+    if others:
+        print()
+        print("  Other databases found (a sandboxed run left these behind):")
+        for c in others:
+            print(f"    {_track_count(c):>6} tracks  {c}")
+        print("  The one with the most tracks is used. Set DJSET_DB_PATH to pin one.")
     print()
     print(f"  {ATTRIBUTION_TEXT}")
     return 0

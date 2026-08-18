@@ -285,6 +285,22 @@ def recording_key(track: Track) -> str:
     return f"{normalize_artist(track.primary_artist)}|{title}"
 
 
+def song_family(track: Track) -> str:
+    """Identifies a song across its versions — original, remix, edit, live.
+
+    The counterpart to :func:`recording_key`, which deliberately keeps version
+    markers so a remix is not *removed* as a duplicate. Both belong in a set;
+    what does not belong is playing them back to back, which is the same song
+    twice however different the tempo. ``title_variants`` already ends with the
+    bare title, so the stripping is not repeated here.
+    """
+    from .enrichment.normalize import normalize_artist, title_variants
+
+    variants = title_variants(track.title)
+    bare = variants[-1] if variants else track.title.lower()
+    return f"{normalize_artist(track.primary_artist)}|{bare}"
+
+
 def dedupe_recordings(tracks: list[Track]) -> list[Track]:
     """Full duplicate removal: ISRC first, then artist+title.
 

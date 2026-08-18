@@ -60,7 +60,7 @@ def is_store_python() -> bool:
     return "WindowsApps" in sys.prefix or "LocalCache" in sys.prefix
 
 
-def _redirected_candidates() -> list[Path]:
+def redirected_candidates() -> list[Path]:
     """Store-Python sandbox copies of the database, wherever they landed.
 
     Deliberately not gated on *this* process being Store Python: the frozen
@@ -115,7 +115,7 @@ def db_path() -> Path:
 
 def _resolve_db_path() -> Path:
     canonical = app_data_dir() / "djset.sqlite3"
-    counts = {c: _track_count(c) for c in (canonical, *_redirected_candidates())}
+    counts = {c: _track_count(c) for c in (canonical, *redirected_candidates())}
 
     best = max(counts, key=lambda c: counts[c])
     if best != canonical and counts[best] > counts.get(canonical, -1):

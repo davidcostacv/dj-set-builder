@@ -323,6 +323,10 @@ class MainWindow(QMainWindow):
             self._artist_genres = db.artist_genres(conn)
             self._aliases = db.genre_aliases(conn)
             self._features = db.all_features(conn)
+            # Held in memory so a checkbox click costs no database work at all.
+            # Membership only changes on a sync, which calls back through here.
+            self._members = db.all_playlist_members(conn)
+            self._track_by_id = {t.spotify_id: t for t in db.all_tracks(conn)}
         self._rebuild_sources()
         self._recompute()
 
@@ -346,8 +350,12 @@ class MainWindow(QMainWindow):
             cb.toggled.connect(self._recompute)
             self.sources_layout.addWidget(cb)
             self.source_boxes.append((cb, row["spotify_id"]))
-            if row["spotify_id"] == LIKED_SONGS_ID:
-                cb.setChecked(True)
+
+        # Nothing is ticked to begin with. Liked Songs used to be, which meant
+        # ticking your own playlist silently produced the *union* of the two —
+        # a set mostly built from tracks that were not in the playlist you
+        # chose. Generate stays disabled until a source is picked, so an empty
+        # start is a prompt rather than a dead end.
 
     def selected_sources(self) -> list[str]:
         return [pid for cb, pid in getattr(self, "source_boxes", []) if cb.isChecked()]
@@ -362,11 +370,25 @@ class MainWindow(QMainWindow):
         return chosen or None
 
     def _all_source_tracks(self) -> list:
+        """Union of the selected sources, from memory.
+
+        Order follows the first playlist a track appears in, and each track
+        appears once however many selected playlists contain it.
+        """
         sources = self.selected_sources()
         if not sources:
             return []
-        with db.session() as conn:
-            return db.tracks_in_playlists(conn, sources)
+        seen: set[str] = set()
+        out = []
+        for pid in sources:
+            for sid in self._members.get(pid, ()):
+                if sid in seen:
+                    continue
+                seen.add(sid)
+                track = self._track_by_id.get(sid)
+                if track is not None:
+                    out.append(track)
+        return out
 
     def _pool(self) -> list:
         """Tracks feeding the sequencer: everything in the selected sources,
@@ -378,12 +400,27 @@ class MainWindow(QMainWindow):
         return tracks
 
     def _recompute(self) -> None:
-        pool = self._pool()
+        everything = self._all_source_tracks()
         picked = getattr(self, "_picked_ids", None)
-        suffix = f" (hand-picked from {len(self._all_source_tracks())})" if picked else ""
-        self.sources_summary.setText(
-            f"{len(self.selected_sources())} source(s) · {len(pool)} tracks{suffix}"
-        )
+        pool = [t for t in everything if t.spotify_id in picked] if picked else everything
+
+        # Name the sources rather than counting them. A bare "2 source(s)" is
+        # easy to read past, and a set silently drawn from a playlist the user
+        # forgot was ticked is the single most confusing thing this app can do.
+        names = [
+            cb.text().rsplit("  (", 1)[0]
+            for cb, pid in getattr(self, "source_boxes", [])
+            if cb.isChecked()
+        ]
+        if not names:
+            label = "No source selected"
+        elif len(names) == 1:
+            label = names[0]
+        else:
+            shown = ", ".join(names[:2])
+            label = f"{shown}{f' +{len(names) - 2} more' if len(names) > 2 else ''}"
+        suffix = f" (hand-picked from {len(everything)})" if picked else ""
+        self.sources_summary.setText(f"{label} · {len(pool)} tracks{suffix}")
         self.clear_pick_btn.setEnabled(bool(picked))
 
         # Genre rows are built from the tags present in THIS selection.

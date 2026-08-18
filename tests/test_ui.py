@@ -147,6 +147,10 @@ def window(qapp, tmp_path, monkeypatch):
     from djset.ui.main_window import MainWindow
 
     w = MainWindow()
+    # Nothing is ticked at startup by design — see
+    # test_no_source_is_ticked_at_startup. Most tests want a populated pool, so
+    # select the one source this fixture creates.
+    w.source_boxes[0][0].setChecked(True)
     yield w
     w.close()
 
@@ -159,7 +163,7 @@ def test_genre_pane_is_collapsed_by_default(window):
 def test_generate_is_enabled_by_sources_alone_not_genres(window):
     """The hard requirement: genre selection is never part of the enabled
     condition, and skipping pane 2 must never be treated as a mistake."""
-    assert window.selected_sources()  # Liked Songs is checked by default
+    assert window.selected_sources()  # the fixture ticks one
     assert window.selected_genres() is None  # nothing selected
     assert window.generate_btn.isEnabled() is True
 
@@ -508,3 +512,68 @@ def test_the_last_row_still_has_no_transition(qapp):
     from PySide6.QtCore import Qt
 
     assert m.data(m.index(1, 5), Qt.DisplayRole) == "—"
+
+
+# ---------------------------------------------------------------------------
+# sources must never be selected on the user's behalf
+# ---------------------------------------------------------------------------
+
+
+def test_no_source_is_ticked_at_startup(qapp, tmp_path, monkeypatch):
+    """Liked Songs used to be pre-ticked. Ticking your own playlist then
+    produced the *union* of the two, so the generated set was mostly built
+    from tracks that were not in the playlist you chose — reported from real
+    use, and reproduced as 1,037 foreign tracks in a 1,103-track pool."""
+    monkeypatch.setenv("DJSET_DB_PATH", str(tmp_path / "startup.sqlite3"))
+    from djset import db
+    from djset.models import LIKED_SONGS_ID, LIKED_SONGS_NAME
+
+    with db.session() as conn:
+        for i in range(3):
+            db.upsert_track(conn, _t(f"t{i}"))
+        db.set_playlist_members(conn, LIKED_SONGS_ID, [(f"t{i}", i, None) for i in range(3)])
+        db.upsert_playlist_cache(conn, LIKED_SONGS_ID, LIKED_SONGS_NAME, None, 3)
+
+    from djset.ui.main_window import MainWindow
+
+    w = MainWindow()
+    try:
+        assert w.selected_sources() == []
+        assert w._pool() == []
+        assert w.generate_btn.isEnabled() is False   # a prompt, not a dead end
+        assert "No source selected" in w.sources_summary.text()
+    finally:
+        w.close()
+
+
+def test_the_summary_names_the_source_rather_than_counting_it(window):
+    """"2 source(s)" is easy to read past; a set silently drawn from a
+    forgotten playlist is the most confusing thing this app can do."""
+    text = window.sources_summary.text()
+    assert "Liked Songs" in text
+    assert "source(s)" not in text
+
+
+def test_the_pool_is_exactly_the_selected_playlist(window):
+    from djset.models import LIKED_SONGS_ID
+
+    assert window.selected_sources() == [LIKED_SONGS_ID]
+    assert {t.spotify_id for t in window._pool()} == {"t0", "t1", "t2"}
+
+
+def test_a_track_in_two_selected_playlists_appears_once(window, qapp):
+    """The union must not duplicate, or the set would repeat it."""
+    from djset import db
+    from djset.models import LIKED_SONGS_ID
+
+    with db.session() as conn:
+        db.upsert_playlist_cache(conn, "pl2", "Second", None, 2)
+        db.set_playlist_members(conn, "pl2", [("t0", 0, None), ("t1", 1, None)])
+    window.reload_from_db()
+
+    for cb, pid in window.source_boxes:
+        cb.setChecked(pid in (LIKED_SONGS_ID, "pl2"))
+
+    ids = [t.spotify_id for t in window._pool()]
+    assert sorted(ids) == ["t0", "t1", "t2"]
+    assert len(ids) == len(set(ids))

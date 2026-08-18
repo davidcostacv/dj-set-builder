@@ -163,6 +163,22 @@ def tracks_in_playlists(
     return [_row_to_track(r) for r in rows]
 
 
+def all_playlist_members(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """Every playlist's track ids, in one pass.
+
+    The UI recomputes on each checkbox click, and querying per click cost a
+    fresh connection and a join over the whole membership table — 217ms at
+    9,800 tracks, and worse while an enrichment holds the write lock. Read it
+    once and keep it; membership only changes on a sync.
+    """
+    out: dict[str, list[str]] = {}
+    for row in conn.execute(
+        "SELECT playlist_id, spotify_id FROM playlist_tracks ORDER BY playlist_id, position"
+    ):
+        out.setdefault(row["playlist_id"], []).append(row["spotify_id"])
+    return out
+
+
 def set_playlist_members(
     conn: sqlite3.Connection,
     playlist_id: str,

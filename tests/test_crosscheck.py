@@ -204,3 +204,59 @@ def test_the_report_states_that_half_double_is_harmless():
 def test_an_empty_run_reports_rather_than_dividing_by_zero():
     text = CrossCheck().report("deezer")
     assert "nothing to compare" in text
+
+
+# ---------------------------------------------------------------------------
+# the tolerance has to actually reach the classification
+# ---------------------------------------------------------------------------
+#
+# Regression: --tolerance was accepted by the parser and described in --help,
+# but cmd_crosscheck never read it and cross_check() did not take one. A 9000x
+# change in the flag produced byte-identical output. Tests that only checked
+# classify_bpm directly could not see it, because the break was in the wiring.
+
+
+def test_the_tolerance_reaches_the_comparison():
+    lenient = Comparison(T(), F(128.0), F(140.0, source="deezer"), 0.15)
+    strict = Comparison(T(), F(128.0), F(140.0, source="deezer"), 0.01)
+
+    assert lenient.bpm_relation == COMPATIBLE
+    assert strict.bpm_relation == CONFLICT
+
+
+def test_cross_check_threads_the_tolerance_all_the_way_down():
+    """End to end through the gathering function, which is where it was lost."""
+    tracks = [T("t1")]
+    features = {"t1": F(128.0, tid="t1")}
+    answers = {"t1": F(140.0, "8A", "deezer", "t1")}
+
+    strict = cross_check(tracks, features, Fake(dict(answers)), mix_tolerance=0.01)
+    lenient = cross_check(tracks, features, Fake(dict(answers)), mix_tolerance=0.15)
+
+    assert strict.bpm[CONFLICT] == 1
+    assert lenient.bpm[CONFLICT] == 0
+    assert lenient.bpm[COMPATIBLE] == 1
+
+
+def test_a_stricter_tolerance_never_reports_fewer_conflicts():
+    """The property that makes the flag meaningful at all."""
+    tracks = [T(f"t{i}") for i in range(6)]
+    features = {t.spotify_id: F(120.0, tid=t.spotify_id) for t in tracks}
+    answers = {
+        f"t{i}": F(120.0 + i * 2.0, "8A", "deezer", f"t{i}") for i in range(6)
+    }
+
+    counts = [
+        cross_check(tracks, features, Fake(dict(answers)), mix_tolerance=t).bpm[CONFLICT]
+        for t in (0.01, 0.03, 0.06, 0.12)
+    ]
+    assert counts == sorted(counts, reverse=True), counts
+
+
+def test_the_report_states_the_tolerance_it_judged_at():
+    """Otherwise the conflict count is uninterpretable — the same data gives a
+    different number at a different setting."""
+    result = cross_check([T("t1")], {"t1": F(tid="t1")},
+                         Fake({"t1": F(128.0, "8A", "deezer", "t1")}),
+                         mix_tolerance=0.09)
+    assert "9%" in result.report("deezer")

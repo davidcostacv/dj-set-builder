@@ -10,7 +10,6 @@ import sys
 
 from . import db
 from .config import ConfigError, app_data_dir, db_path, load_config, log_path
-from .crosscheck import SAME_VALUE_TOLERANCE
 from .enrichment import (
     ATTRIBUTION_TEXT,
     AcousticBrainzSource,
@@ -23,6 +22,7 @@ from .enrichment import (
 from .logging_setup import setup_logging
 from .net import close_client
 from .report import build_coverage, coverage_as_json, format_coverage
+from .sequencing import DEFAULT_TOLERANCE
 from .spotify.auth import SpotifyAuth
 from .spotify.client import SpotifyClient
 from .spotify.sync import list_sources, sync_artists, sync_playlists
@@ -353,6 +353,20 @@ def cmd_about(args: argparse.Namespace) -> int:
     return 0
 
 
+def _tolerance(raw: str) -> float:
+    """Reject a tolerance that cannot mean anything, naming the bound."""
+    try:
+        value = float(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{raw!r} is not a number")
+    if not 0.0 < value <= 1.0:
+        raise argparse.ArgumentTypeError(
+            f"{value} is outside 0-1 — a BPM tolerance is a fraction, so 0.06 "
+            "means 6%"
+        )
+    return value
+
+
 def cmd_crosscheck(args: argparse.Namespace) -> int:
     from .crosscheck import cross_check
 
@@ -380,7 +394,7 @@ def cmd_crosscheck(args: argparse.Namespace) -> int:
         print(f"Putting {len(tracks)} already-resolved tracks to {args.against}…\n")
         result = cross_check(
             tracks, features, challenger, skip_source=challenger.name,
-            progress=_enrich_progress,
+            mix_tolerance=args.tolerance, progress=_enrich_progress,
         )
 
     print("\n")
@@ -451,10 +465,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--sample", type=int, default=150)
     sp.add_argument(
         "--tolerance",
-        type=float,
-        default=SAME_VALUE_TOLERANCE,
-        help=f"relative BPM difference still counted as the same value "
-        f"(default: {SAME_VALUE_TOLERANCE})",
+        type=_tolerance,
+        default=DEFAULT_TOLERANCE,
+        help="the BPM tolerance you build sets at — it decides what counts as "
+        f"a conflict rather than a harmless difference (default: "
+        f"{DEFAULT_TOLERANCE}, same as `generate`)",
     )
     sp.set_defaults(func=cmd_crosscheck)
 

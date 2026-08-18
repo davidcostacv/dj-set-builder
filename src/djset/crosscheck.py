@@ -81,10 +81,15 @@ class Comparison:
     track: Track
     baseline: AudioFeatures  # what is on file
     challenger: AudioFeatures  # what the second source says
+    # The tolerance this comparison was judged at, carried rather than looked
+    # up, so a Comparison means the same thing wherever it is read.
+    mix_tolerance: float = DEFAULT_TOLERANCE
 
     @property
     def bpm_relation(self) -> str | None:
-        return classify_bpm(self.baseline.bpm, self.challenger.bpm)
+        return classify_bpm(
+            self.baseline.bpm, self.challenger.bpm, mix_tolerance=self.mix_tolerance
+        )
 
     @property
     def key_relation(self) -> str | None:
@@ -122,6 +127,7 @@ class Comparison:
 
 @dataclass
 class CrossCheck:
+    mix_tolerance: float = DEFAULT_TOLERANCE
     asked: int = 0
     answered: int = 0  # the second source had something to say
     bpm: Counter[str] = field(default_factory=Counter)
@@ -153,6 +159,10 @@ class CrossCheck:
         add(f"Second opinion from {challenger_name!r}")
         add("=" * 66)
         add(f"asked about   : {self.asked} tracks that already have data")
+        add(
+            f"judged at     : {self.mix_tolerance:.0%} BPM tolerance — the same "
+            "setting you build sets with"
+        )
         add(f"it could answer: {self.answered}")
         if self.by_source:
             add("  their data came from: " + ", ".join(
@@ -203,14 +213,21 @@ def cross_check(
     challenger,
     *,
     skip_source: str | None = None,
+    mix_tolerance: float = DEFAULT_TOLERANCE,
     progress=None,
 ) -> CrossCheck:
     """Put tracks that already have data to a second source.
 
     ``skip_source`` drops tracks whose data came from the challenger itself,
     since comparing a source with itself measures nothing.
+
+    ``mix_tolerance`` is the sequencer's BPM tolerance, and it decides what
+    counts as a conflict. It is a parameter rather than a constant because the
+    only conflicts worth knowing about are the ones that would damage a set at
+    the tolerance *you* generate at — someone mixing at 12% has fewer real
+    problems than someone mixing at 2%, from identical data.
     """
-    result = CrossCheck()
+    result = CrossCheck(mix_tolerance=mix_tolerance)
     for i, track in enumerate(tracks, 1):
         baseline = features.get(track.spotify_id)
         if baseline is None:
@@ -225,7 +242,7 @@ def cross_check(
             log.warning("crosscheck: %s raised on %s: %s", challenger.name, track.title, exc)
             continue
         if found is not None:
-            result.add(Comparison(track, baseline, found))
+            result.add(Comparison(track, baseline, found, mix_tolerance))
         if progress is not None:
             progress(i, len(tracks), f"{track.primary_artist} — {track.title}")
     return result

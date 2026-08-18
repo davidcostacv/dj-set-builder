@@ -50,14 +50,27 @@ class SetTableModel(QAbstractTableModel):
             return COLUMNS[section]
         return None
 
-    def _transition_into_next(self, row: int):
+    # A join between two rows is one of four things, and collapsing them all
+    # to None lost the distinction that matters: "these two will not mix" is a
+    # defect in the set, while "we do not know" and "there is no next track"
+    # are not.
+    END = "end"          # last row: nothing follows
+    UNKNOWN = "unknown"  # one side has no BPM/key, so nothing can be said
+    BROKEN = "broken"    # the predicates forbid it: this join does not mix
+
+    def _join(self, row: int):
+        """``(status, transition)``. The transition is None unless status is ok."""
         if row + 1 >= len(self._tracks):
-            return None
+            return self.END, None
         a = self._features.get(self._tracks[row].spotify_id)
         b = self._features.get(self._tracks[row + 1].spotify_id)
         if a is None or b is None:
-            return None
-        return transition(a, b, self._opts)
+            return self.UNKNOWN, None
+        tr = transition(a, b, self._opts)
+        return (self.BROKEN, None) if tr is None else ("ok", tr)
+
+    def _transition_into_next(self, row: int):
+        return self._join(row)[1]
 
     def data(self, index: QModelIndex, role=Qt.DisplayRole):
         if not index.isValid():
@@ -78,9 +91,16 @@ class SetTableModel(QAbstractTableModel):
             if col == 4:
                 return (feat.key_camelot if feat else None) or "—"
             if col == 5:
-                tr = self._transition_into_next(row)
-                if tr is None:
-                    return "—" if row + 1 >= len(self._tracks) else "incompatible"
+                status, tr = self._join(row)
+                if status == self.END:
+                    return "—"
+                if status == self.UNKNOWN:
+                    # Not the same as incompatible: nothing is known about this
+                    # join, so calling it incompatible blames the set for a gap
+                    # in the data.
+                    return "no data"
+                if status == self.BROKEN:
+                    return "incompatible"
                 return tr.label
 
         if role == Qt.TextAlignmentRole and col in (0, 3, 4):
@@ -137,11 +157,24 @@ class SetTableModel(QAbstractTableModel):
         return sum(t.duration_ms or 0 for t in self._tracks)
 
     def average_quality(self) -> float:
-        qualities = [
-            tr.quality
-            for tr in (self._transition_into_next(i) for i in range(len(self._tracks) - 1))
-            if tr is not None
-        ]
+        """Mean quality over the joins that can be judged.
+
+        An incompatible join counts as zero rather than being skipped. Dropping
+        it meant the headline number could not get worse when the set did:
+        dragging a track to somewhere it does not mix left the percentage
+        untouched, which is precisely when a reader most needs it to move.
+
+        Joins where a track has no BPM or key are still excluded — that is
+        missing information, not a bad transition, and scoring it zero would
+        blame the set for a gap in the data.
+        """
+        qualities: list[float] = []
+        for row in range(len(self._tracks) - 1):
+            status, tr = self._join(row)
+            if status == "ok":
+                qualities.append(tr.quality)
+            elif status == self.BROKEN:
+                qualities.append(0.0)
         return sum(qualities) / len(qualities) if qualities else 0.0
 
     def summary_line(self) -> str:

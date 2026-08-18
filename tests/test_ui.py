@@ -447,3 +447,64 @@ def test_a_single_manual_error_still_names_its_field(qapp):
     assert "<b>Key:</b>" in hint
     assert "<b>BPM:</b>" not in hint
     d.close()
+
+
+# ---------------------------------------------------------------------------
+# the quality number has to respond to the set getting worse
+# ---------------------------------------------------------------------------
+
+
+def test_an_incompatible_join_drags_the_average_down(qapp):
+    """Regression: incompatible joins were skipped rather than scored, so
+    dragging a track somewhere it does not mix left the headline percentage
+    untouched — exactly when a reader most needs it to move."""
+    tracks = [_t("a"), _t("b"), _t("c")]
+    feats = {"a": _f("a", 128, "8A"), "b": _f("b", 128, "8A"), "c": _f("c", 175, "3B")}
+    m = SetTableModel(tracks, feats, SequenceOptions())
+
+    from PySide6.QtCore import Qt
+
+    assert m.data(m.index(1, 5), Qt.DisplayRole) == "incompatible"
+    # a->b is excellent (1.0), b->c is incompatible (0.0): the mean is not 1.0.
+    assert m.average_quality() < 1.0
+    assert m.average_quality() == pytest.approx(0.5, abs=0.25)
+
+
+def test_reordering_into_a_break_moves_the_summary(qapp):
+    tracks = [_t("a"), _t("b"), _t("c")]
+    feats = {"a": _f("a", 128, "8A"), "b": _f("b", 129, "8A"), "c": _f("c", 130, "9A")}
+    m = SetTableModel(tracks, feats, SequenceOptions())
+    before = m.average_quality()
+
+    m.moveRow(2, 0)  # put the wheel-step track first
+    assert m.average_quality() != before or m.summary_line() != ""
+
+
+def test_missing_data_is_not_reported_as_incompatible(qapp):
+    """"We do not know" and "these will not mix" are different claims, and only
+    one of them is the set's fault."""
+    tracks = [_t("a"), _t("b")]
+    m = SetTableModel(tracks, {"a": _f("a", 128, "8A")}, SequenceOptions())
+
+    from PySide6.QtCore import Qt
+
+    assert m.data(m.index(0, 5), Qt.DisplayRole) == "no data"
+
+
+def test_an_unknown_join_is_not_scored_as_zero(qapp):
+    """Scoring it zero would blame the set for a gap in the data."""
+    tracks = [_t("a"), _t("b"), _t("c")]
+    feats = {"a": _f("a", 128, "8A"), "b": _f("b", 128, "8A")}  # c has nothing
+    m = SetTableModel(tracks, feats, SequenceOptions())
+
+    assert m.average_quality() == pytest.approx(1.0)
+
+
+def test_the_last_row_still_has_no_transition(qapp):
+    tracks = [_t("a"), _t("b")]
+    feats = {"a": _f("a", 128, "8A"), "b": _f("b", 128, "8A")}
+    m = SetTableModel(tracks, feats, SequenceOptions())
+
+    from PySide6.QtCore import Qt
+
+    assert m.data(m.index(1, 5), Qt.DisplayRole) == "—"

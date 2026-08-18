@@ -115,11 +115,42 @@ its predecessors had already failed on:
 | GetSongBPM (20) | BPM + key | fuzzy artist/title | baseline, ~35% of library |
 | AcousticBrainz (25) | BPM + key | exact, ISRC → MBID | **38%** with key, 5% BPM-only |
 | Deezer (30) | BPM only | exact, ISRC | ~20% |
+| DSP (40) | BPM + key | analyses the audio | **100%** of anything with a preview |
 
 Spotify's own `/audio-features` and `/audio-analysis` are **not** an option:
 both return `403` for all applications since November 2024. Verified against a
 live token; the bare 403 with no message body is the deprecation signature, not
 a scope problem.
+
+**Catalogue coverage decays with release date, and that is structural.**
+Resolution rate by year, measured across this library:
+
+```
+pre-2015  89%   2018  77%   2021  42%   2024   2%
+2015      88%   2019  68%   2022  17%   2025   1%
+2016      84%   2020  52%   2023   0%   2026   1%
+2017      76%
+```
+
+The cliff is February 2022, when AcousticBrainz stopped accepting submissions.
+It is a frozen archive, so the gap widens with every release: a library of
+classics resolves around 85-90%, a library of current music around 5%. Nothing
+about a user's setup explains that — it is purely a function of when their
+music came out.
+
+`DSPSource` is the answer, and the only one. It fetches the 30-second preview
+and *measures* the audio, so it always produces an answer and its coverage does
+not decay. On 14 post-2023 tracks no catalogue could resolve, it answered 14.
+
+It is off by default (`djset enrich --dsp`) because it downloads audio and
+costs about 2.5 seconds of CPU per track — enabling it changes what a run costs,
+not just what it finds. Measured against GetSongBPM as curated truth on 22
+tracks: BPM usable 77% (41% exact, 18% inside the sequencer's tolerance, 18%
+half/double, which the sequencer absorbs anyway); of the keys it reported, 74%
+were exact or adjacent on the Camelot wheel, and adjacent still mixes. A key
+whose winning profile does not clearly beat the runner-up is dropped rather
+than guessed, so the tempo is returned alone. Audio is streamed to a temp file,
+measured, and deleted — the preview is a means of measurement, not a download.
 
 AcousticBrainz stopped accepting submissions in 2022 but still serves its
 dataset. It is the only free source found that supplies harmonic data on an

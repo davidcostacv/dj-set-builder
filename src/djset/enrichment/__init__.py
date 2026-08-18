@@ -1,6 +1,7 @@
 from .acousticbrainz import AcousticBrainzSource
 from .base import FeatureSource, Resolver, set_manual_features
 from .deezer import DeezerSource
+from .dsp import DSPSource
 from .getsongbpm import ATTRIBUTION_TEXT, ATTRIBUTION_URL, GetSongBPMSource
 from .rekordbox import RekordboxXMLSource
 from .runner import EnrichmentStats, enrich_tracks
@@ -12,6 +13,7 @@ def default_sources(
     *,
     acousticbrainz: bool = True,
     deezer: bool = True,
+    dsp: bool = False,
 ) -> list[FeatureSource]:
     """The registered chain, in priority order.
 
@@ -27,6 +29,12 @@ def default_sources(
         sources.append(AcousticBrainzSource())
     if deezer:
         sources.append(DeezerSource())
+    if dsp:
+        # Off by default: it downloads a preview and spends ~2.5s of CPU per
+        # track, so it changes what a run costs rather than just what it finds.
+        # It is the only source whose coverage does not decay with release
+        # date, which is why it exists at all — see djset.enrichment.dsp.
+        sources.append(DSPSource())
     return sources
 
 
@@ -34,6 +42,7 @@ __all__ = [
     "ATTRIBUTION_TEXT",
     "ATTRIBUTION_URL",
     "AcousticBrainzSource",
+    "DSPSource",
     "DeezerSource",
     "EnrichmentStats",
     "FeatureSource",

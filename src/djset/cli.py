@@ -13,6 +13,7 @@ from .config import ConfigError, app_data_dir, db_path, load_config, log_path
 from .enrichment import (
     ATTRIBUTION_TEXT,
     AcousticBrainzSource,
+    DSPSource,
     DeezerSource,
     GetSongBPMSource,
     Resolver,
@@ -125,6 +126,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         cfg.getsongbpm_rate_per_hour,
         acousticbrainz=not args.no_acousticbrainz,
         deezer=not args.no_deezer,
+        dsp=args.dsp,
     )
     resolver = Resolver(sources)
     if not resolver.sources:
@@ -650,6 +652,13 @@ def _add_enrich_args(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("--no-deezer", action="store_true", help="disable the Deezer source")
     sp.add_argument(
         "--no-getsongbpm", action="store_true", help="disable the GetSongBPM source"
+    )
+    sp.add_argument(
+        "--dsp",
+        action="store_true",
+        help="analyse the 30s preview when no catalogue has an answer. The "
+        "only source that works on post-2022 music, but it downloads audio "
+        "and costs ~2.5s of CPU per track",
     )
     sp.add_argument(
         "--no-acousticbrainz",

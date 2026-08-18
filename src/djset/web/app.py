@@ -350,6 +350,7 @@ class EnrichIn(BaseModel):
     sample: int | None = None
     acousticbrainz: bool = True
     deezer: bool = True
+    dsp: bool = False
 
 
 @app.get("/api/job")
@@ -405,6 +406,7 @@ def job_enrich(body: EnrichIn) -> dict[str, Any]:
         cfg.getsongbpm_rate_per_hour,
         acousticbrainz=body.acousticbrainz,
         deezer=body.deezer,
+        dsp=body.dsp,
     )
     if not sources:
         raise HTTPException(400, "No sources enabled — nothing to ask.")

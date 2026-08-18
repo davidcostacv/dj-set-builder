@@ -1,11 +1,10 @@
 # djset — personal Spotify playlist & DJ set generator
 
-Single-user, local-only desktop app. Reads your Spotify library, optionally
-filters it by genre, sequences a harmonically-mixed set, and creates the
-playlist directly in your Spotify account. The output is a playlist link and
-nothing else — no file exports.
+Reads your Spotify library, optionally filters it by genre, sequences a
+harmonically-mixed set, and creates the playlist directly in your Spotify
+account. The output is a playlist link and nothing else — no file exports.
 
-Stack: Python 3.11+, PySide6, SQLite, `httpx`, and
+Stack: Python 3.11+, SQLite, `httpx`, and
 [GetSongBPM](https://getsongbpm.com) for BPM and key data.
 
 > **BPM and musical key data provided by [GetSongBPM](https://getsongbpm.com).**
@@ -14,9 +13,62 @@ Stack: Python 3.11+, PySide6, SQLite, `httpx`, and
 
 ---
 
+## Where this is going
+
+**It is becoming a web app.** The desktop build works and is not going away
+yet, but the interface is moving to the browser in two deliberate steps:
+
+1. **Now — the web UI, served locally.** A small HTTP layer over the existing
+   engine, with the four panes rebuilt in the browser at `localhost`. The Qt
+   window stays usable until the browser version matches it.
+2. **Then — hosted, off your machine.** The same server deployed, so nothing
+   runs on your PC and you can reach it from a phone.
+
+Doing it in that order is not caution for its own sake: the whole interface
+gets rewritten and proven before hosting, secrets, and OAuth redirects are
+added on top. Two hard problems, one at a time.
+
+### What this costs, honestly
+
+**The database does not disappear — it moves.** That is forced, not a
+preference. Spotify has not returned BPM or key since November 2024, so every
+value comes from GetSongBPM, AcousticBrainz and Deezer, and AcousticBrainz runs
+through MusicBrainz at one request per second. Without a cache, a 20-track set
+would mean minutes of live lookups and would re-trigger the rate limits that
+have already cost this project a nine-hour lockout. Hosted, the file simply sits
+on the server instead of in `%LOCALAPPDATA%`.
+
+Hosting also **fixes** something. A full enrichment pass takes about eight
+hours; on a server it runs to completion instead of dying whenever the machine
+sleeps or a shell tears it down.
+
+Two constraints come with going hosted, both worth knowing before that step:
+the Spotify client ID and GetSongBPM key move onto a server, and this app is
+registered in Spotify **development mode**, which caps it at roughly 25 users
+and requires the owner to hold Premium. Fine for personal use; it cannot be
+shared publicly without Spotify's extension approval.
+
+### Why the move is cheap
+
+Nothing outside `ui/` knows Qt exists — layer 3 never imports layer 1, which
+the brief required from the start and which turns out to be exactly what makes
+this affordable:
+
+| | lines | fate |
+|---|---:|---|
+| `ui/` (PySide6) | 2,028 | replaced by the browser front end |
+| everything else | 5,509 | carries over untouched |
+
+The sequencer, Camelot conversion, genre filter, Spotify client, all three
+enrichment sources and the database layer move across as they are. The
+rewrite is a new front end, not a new program.
+
+---
+
 ## Status
 
-All nine build-order steps are implemented. **283 tests, no network calls.**
+All nine build-order steps of the original desktop brief are implemented.
+**453 tests, no network calls.** The web interface is in progress.
 
 | Step | | |
 |---|---|---|
@@ -29,6 +81,21 @@ All nine build-order steps are implemented. **283 tests, no network calls.**
 | 7 | PySide6 UI, panes 1→4 | done |
 | 8 | Split by genre | done |
 | 9 | PyInstaller packaging | done |
+
+And the web build, in order:
+
+| Step | | |
+|---|---|---|
+| W1 | HTTP layer over the existing engine (`djset serve`) | in progress |
+| W2 | Browser front end: the four panes | in progress |
+| W3 | Generate + save, driven from the browser | |
+| W4 | Sync and enrich as background jobs with live progress | |
+| W5 | OAuth against a non-loopback redirect | |
+| W6 | Deploy, with the database and secrets on the server | |
+
+W5 and W6 are deliberately last. Everything before them runs at `localhost`
+with the loopback redirect that already works, so the interface can be
+finished and used before hosting is introduced.
 
 ### Known limitations, measured rather than assumed
 
@@ -127,8 +194,14 @@ Then:
 djset login      # authorize once
 djset sync       # pull playlists into SQLite
 djset enrich     # fill BPM/key (long; Ctrl+C is safe, it resumes)
-djset ui         # open the window
+djset ui         # open the desktop window
 ```
+
+`djset enrich` is the slow one — roughly eight hours for a 10,000-track
+library, dominated by MusicBrainz's one-request-per-second ceiling. It commits
+every result as it lands, so Ctrl+C is safe and re-running resumes rather than
+restarts. Run it in your own terminal: it is long enough that anything which
+reaps background processes will interrupt it.
 
 ---
 

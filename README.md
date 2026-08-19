@@ -162,16 +162,26 @@ a missing key costs one track while a wrong key corrupts every transition it
 takes part in. That floor is measured: over 26 analyses the median strength was
 0.64 and only 11.5% fell below it.
 
-**Spotify may no longer return artist genres — still unresolved.** Every artist
-fetched so far came back with an empty `genres` array, across 600+ artists. Two
-explanations fit that equally well: the field is gone for everyone, or the
-request is wrong. They call for opposite responses, so it should not be acted
-on until it is settled, and it has not been.
+**Spotify has removed artist genres — settled 19 Aug 2026.** This sat open for
+most of the project because two explanations fitted the evidence equally well:
+the field was gone for everyone, or the request was wrong. They called for
+opposite responses, so it was left alone until it could be checked properly.
 
-If the removal is real, the genre filter and Split-by-genre have no data source.
-The code degrades cleanly — everything falls into the `Unknown` bucket and "no
-filter" remains the default path — but the feature would be empty. GetSongBPM's
-artist search returns genres and is the natural substitute.
+It is gone. The artist object no longer *contains* the field — not an empty
+array, absent. Across five artists including Lana Del Rey the response carried
+only:
+
+```
+external_urls, href, id, images, name, type, uri
+```
+
+So the genre filter and Split-by-genre have no data source, and no amount of
+syncing will produce one. The code degrades cleanly — everything falls into the
+`Unknown` bucket and "no filter" stays the default path — and the pane now says
+the field was removed rather than suggesting a fetch that cannot work.
+
+GetSongBPM's artist search does return genres and is the natural substitute;
+`GetSongBPMSource.artist_genres()` already parses them and is not yet wired in.
 
 The pane says which of the three cases it is in rather than just going blank:
 tags not fetched, fetched-and-empty, or fetched-and-empty-so-far with some

@@ -147,6 +147,12 @@ class GenreAvailability:
     the same blankness for all of them is what makes it read as broken. They
     are told apart by counting artists rather than tags: an artist row exists
     once fetched, whether or not Spotify gave it any genres.
+
+    Settled on 19 Aug 2026: Spotify has **removed** the field. The artist
+    object no longer contains ``genres`` at all — checked against five artists
+    including Lana Del Rey, the response carries only external_urls, href, id,
+    images, name, type and uri. So this is not a fetch that might start working;
+    it is a data source that no longer exists, and the wording says so.
     """
 
     artists: int  # distinct artists across the pool
@@ -187,24 +193,24 @@ class GenreAvailability:
             return None
 
         unaffected = "Generate is unaffected — it never depends on genre."
+        removed = (
+            "Spotify removed artist genres from its API — the artist object no "
+            "longer carries the field at all, so fetching more will not help."
+        )
         if self.fetched == 0:
+            # Deliberately no longer says "run Sync". Syncing cannot return a
+            # field the API stopped sending, and sending someone to do it is
+            # worse than saying nothing.
             return (
-                f"Run Sync to fetch tags for the {self.artists} artists in this "
-                "selection. The genre filter is optional and never gates it, so "
-                "Generate works without them."
+                f"{removed} None of the {self.artists} artists here have been "
+                f"fetched, but doing so would not produce any. {unaffected}"
             )
         if self.partial:
             return (
-                "Spotify returned an empty tag list for every artist fetched so "
-                f"far, and the other {self.artists - self.fetched} have not been "
-                "fetched — running Sync again would settle it. Whether the field "
-                f"was removed from the API is unconfirmed. {unaffected}"
+                f"{removed} {self.fetched} of {self.artists} artists here were "
+                f"fetched and none carried tags. {unaffected}"
             )
-        return (
-            f"Spotify returned an empty tag list for all {self.fetched} artists "
-            "fetched, so there is nothing to filter on. Whether the field was "
-            f"removed from the API is unconfirmed. {unaffected}"
-        )
+        return f"{removed} All {self.fetched} artists here came back without any. {unaffected}"
 
 
 def genre_availability(

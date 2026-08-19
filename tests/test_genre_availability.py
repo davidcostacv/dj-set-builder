@@ -1,9 +1,15 @@
 """An empty genre pane has three causes and must not look identical in all of them.
 
-Spotify currently returns an empty `genres` array for every artist in this
-library. Whether that is a permanent removal is unconfirmed — so the pane has
-to distinguish "not fetched yet" (the user can act) from "fetched and empty"
-(they cannot), and say plainly that neither blocks Generate.
+Settled on 19 Aug 2026: Spotify has removed artist genres from its API. The
+artist object no longer carries the field at all — checked against five
+artists including Lana Del Rey, the response contains only external_urls,
+href, id, images, name, type and uri.
+
+So the pane still distinguishes its three states, because the counts differ
+and a reader deserves to know what was actually checked, but none of them may
+suggest that fetching would help. It cannot. Every wording also says Generate
+is unaffected, because a filter that looks broken invites the reader to assume
+it blocks something.
 """
 
 from __future__ import annotations
@@ -34,13 +40,16 @@ def test_nothing_selected_has_nothing_to_explain():
     assert not a.usable
 
 
-def test_artists_never_fetched_is_actionable():
+def test_nothing_fetched_no_longer_sends_them_to_sync():
+    """It used to say "run Sync". Syncing cannot return a field the API stopped
+    sending, and sending someone to do it is worse than saying nothing."""
     a = genre_availability([T("t1", "a1"), T("t2", "a2")], {})
 
     assert (a.artists, a.fetched, a.tagged) == (2, 0, 0)
     assert not a.usable
     assert "not fetched" in a.headline
-    assert "Sync" in a.detail  # tells them what to do
+    assert "would not produce any" in a.detail
+    assert "Run Sync" not in a.detail
 
 
 def test_fetched_but_empty_does_not_send_them_to_sync():
@@ -52,7 +61,7 @@ def test_fetched_but_empty_does_not_send_them_to_sync():
     assert not a.usable
     assert "No genre tags" in a.headline
     assert "Run Sync" not in a.detail  # everything that could be fetched, was
-    assert "unconfirmed" in a.detail  # honest that the cause is not established
+    assert "removed artist genres" in a.detail  # states the settled cause
 
 
 def test_a_half_finished_sync_does_not_claim_more_than_it_checked():
@@ -65,8 +74,8 @@ def test_a_half_finished_sync_does_not_claim_more_than_it_checked():
     assert (a.artists, a.fetched, a.tagged) == (10, 3, 0)
     assert a.partial
     assert "3 of 10" in a.headline
-    assert "7 have not been fetched" in a.detail
-    assert "Sync again" in a.detail  # the remaining ones are still worth trying
+    assert "3 of 10 artists here were fetched" in a.detail
+    assert "will not help" in a.detail  # fetching more is pointless now
 
 
 def test_a_complete_fetch_can_speak_for_the_whole_selection():
@@ -75,7 +84,7 @@ def test_a_complete_fetch_can_speak_for_the_whole_selection():
 
     assert not a.partial
     assert "any of these 3 artists" in a.headline
-    assert "all 3 artists fetched" in a.detail
+    assert "All 3 artists here" in a.detail
 
 
 def test_tags_present_needs_no_explanation():

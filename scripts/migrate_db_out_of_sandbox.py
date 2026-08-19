@@ -66,23 +66,66 @@ def writer_running() -> bool:
         return False
 
 
-def copy_with_wal(src: Path, dst: Path) -> None:
-    """Copy the database and any sidecar files, main file first.
+# Order matters: parents before the rows that reference them.
+_TABLES = (
+    "tracks",
+    "playlists_cache",
+    "playlist_tracks",
+    "audio_features",
+    "artists",
+    "genre_aliases",
+    "exports",
+    "enrichment_misses",
+)
 
-    shutil rather than SQLite's backup API on purpose: the whole reason this
-    script exists is that Python cannot open the source through the sandbox.
-    A raw byte copy does not need to.
+
+def rebuild_into(src: Path, dst: Path) -> dict[str, int]:
+    """Rebuild the database row by row into a fresh file.
+
+    A byte copy would be faster and was the original plan, but the sandbox left
+    real damage behind: SQLite reported a rowid out of order and rows missing
+    from an index, and `enrichment_misses` counted 4,180 through the index
+    while a full scan returned 4,157. Copying the bytes would carry that
+    forward. Reading every row and writing it into a clean schema heals it,
+    because the destination's indexes are built from scratch.
+
+    A damaged index is also why rows are read with a bare SELECT and inserted
+    with INSERT OR IGNORE: the scan may hand back a duplicate the broken index
+    was hiding, and that should not abort the rescue.
     """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    from djset import db as djdb
+
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
-    for suffix in ("-wal", "-shm"):
-        side = src.with_name(src.name + suffix)
-        if side.exists():
+    source = sqlite3.connect(src, timeout=60)
+    source.row_factory = sqlite3.Row
+    target = djdb.connect(dst)          # creates the schema
+
+    moved: dict[str, int] = {}
+    try:
+        for table in _TABLES:
             try:
-                shutil.copy2(side, dst.with_name(dst.name + suffix))
-            except OSError as exc:
-                # -shm is rebuilt by SQLite; -wal matters and is copied first.
-                print(f"  note: could not copy {suffix} ({exc}); SQLite will rebuild it")
+                rows = source.execute(f"SELECT * FROM {table}").fetchall()
+            except sqlite3.DatabaseError as exc:
+                print(f"  {table}: unreadable, skipped ({exc})")
+                moved[table] = 0
+                continue
+            if not rows:
+                moved[table] = 0
+                continue
+            columns = rows[0].keys()
+            placeholders = ",".join("?" * len(columns))
+            sql = (
+                f"INSERT OR IGNORE INTO {table} ({','.join(columns)}) "
+                f"VALUES ({placeholders})"
+            )
+            target.executemany(sql, [tuple(r) for r in rows])
+            moved[table] = len(rows)
+        target.commit()
+    finally:
+        source.close()
+        target.close()
+    return moved
 
 
 def verify(path: Path) -> tuple[int, int]:
@@ -125,10 +168,12 @@ def main() -> int:
 
     print(f"  from : {src}  ({src.stat().st_size / 1e6:.1f} MB)")
     print(f"  to   : {args.target}")
-    copy_with_wal(src, args.target)
+    moved = rebuild_into(src, args.target)
+    for table, n in moved.items():
+        print(f"    {table:<20} {n:>6}")
 
     tracks, usable = verify(args.target)
-    print(f"  verified: {tracks} tracks, {usable} with BPM+key, integrity ok")
+    print(f"\n  verified: {tracks} tracks, {usable} with BPM+key, integrity ok")
 
     if args.no_setx:
         print(f"\nSet this yourself when ready:\n  setx DJSET_DB_PATH \"{args.target}\"")

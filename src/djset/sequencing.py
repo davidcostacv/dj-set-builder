@@ -16,7 +16,9 @@ import bisect
 from dataclasses import dataclass, field, replace
 from enum import Enum
 
-from .camelot import parse_camelot
+# key_distance/key_compatible are re-exported: they moved to `camelot`,
+# where the wheel arithmetic belongs, and every caller here still works.
+from .camelot import key_compatible, key_distance, parse_camelot
 from .filtering import dedupe_recordings, song_family
 from .models import AudioFeatures, Track
 
@@ -49,33 +51,6 @@ class SequenceMode(str, Enum):
     @property
     def uses_key(self) -> bool:
         return self in (SequenceMode.KEY, SequenceMode.BPM_KEY)
-
-
-def key_distance(a: str, b: str, *, energy_boost: bool = False) -> int | None:
-    """Harmonic distance between two Camelot codes, or None if incompatible.
-
-    0 = same key, 1 = adjacent on the wheel or relative major/minor,
-    2 = the optional +7 "energy boost" move.
-    """
-    try:
-        an, al = parse_camelot(a)
-        bn, bl = parse_camelot(b)
-    except ValueError:
-        return None
-
-    if an == bn and al == bl:
-        return 0
-    if al == bl and (bn - an) % 12 in (1, 11):  # +/-1 around the wheel
-        return 1
-    if an == bn and al != bl:  # relative major/minor
-        return 1
-    if energy_boost and al == bl and (bn - an) % 12 == 7:
-        return 2
-    return None
-
-
-def key_compatible(a: str, b: str, *, energy_boost: bool = False) -> bool:
-    return key_distance(a, b, energy_boost=energy_boost) is not None
 
 
 def bpm_ratio(a: float, b: float) -> float:

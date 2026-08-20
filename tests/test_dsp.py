@@ -218,3 +218,118 @@ def test_it_answers_where_the_catalogues_are_silent(monkeypatch):
     assert reason is None
     assert features.source == "dsp"
     assert features.is_usable
+
+
+# ---------------------------------------------------------------------------
+# a thin margin that does not matter
+# ---------------------------------------------------------------------------
+#
+# The runner-up is usually the relative minor or the fifth. Those sit one step
+# from the winner on the Camelot wheel and mix with the same neighbours, so
+# being unsure between 8A and 8B is not the same as not knowing the key —
+# either choice sequences identically. Dropping the key there cost 512 tracks
+# their eligibility to protect against a disagreement that has no consequence.
+
+
+def test_a_thin_margin_between_relative_keys_keeps_the_key():
+    """C major and A minor are 8B and 8A — one step apart, mutually mixable."""
+    import djset.enrichment.dsp as dsp
+
+    key, margin = dsp._decide([(1.000, "C major"), (0.999, "A minor")])
+    assert key == "8B"
+    assert margin < MIN_KEY_MARGIN      # kept in spite of the margin, not because
+
+
+def test_a_thin_margin_between_incompatible_keys_drops_it():
+    """C major (8B) against C minor (5A) is three steps — a real coin toss."""
+    import djset.enrichment.dsp as dsp
+
+    key, margin = dsp._decide([(1.000, "C major"), (0.999, "C minor")])
+    assert key is None
+    assert margin < MIN_KEY_MARGIN
+
+
+def test_a_third_near_tie_is_not_ignored():
+    """Two compatible front-runners mean nothing if something a tone away
+    scored just as well."""
+    import djset.enrichment.dsp as dsp
+
+    key, _ = dsp._decide(
+        [(1.000, "C major"), (0.999, "A minor"), (0.999, "D minor")]
+    )
+    assert key is None
+
+
+def test_a_clear_winner_still_wins_outright():
+    import djset.enrichment.dsp as dsp
+
+    key, margin = dsp._decide([(1.0, "C major"), (0.5, "C minor")])
+    assert key == "8B"
+    assert margin >= MIN_KEY_MARGIN
+
+
+# ---------------------------------------------------------------------------
+# a second place to find audio
+# ---------------------------------------------------------------------------
+
+
+def test_itunes_is_asked_only_when_deezer_has_nothing(monkeypatch):
+    """It is a fallback for the holes in one catalogue, not a second vote."""
+    src = DSPSource(rate_per_hour=10**9)
+    monkeypatch.setattr(src, "_get", lambda *a, **k: {"preview": "http://dz/p.mp3"})
+    called = []
+    monkeypatch.setattr(src, "_itunes_preview", lambda t: called.append(t) or "nope")
+
+    assert src.preview_url(T()) == "http://dz/p.mp3"
+    assert called == []
+
+
+def test_itunes_fills_in_when_deezer_has_no_preview(monkeypatch):
+    src = DSPSource(rate_per_hour=10**9)
+    monkeypatch.setattr(src, "_get", lambda *a, **k: None)
+    monkeypatch.setattr(src, "_search_preview", lambda t: None)
+    monkeypatch.setattr(src, "_itunes_preview", lambda t: "http://itunes/p.m4a")
+
+    assert src.preview_url(T()) == "http://itunes/p.m4a"
+
+
+def test_a_loose_itunes_match_is_refused(monkeypatch):
+    """iTunes returns something for almost any query. Measuring the wrong song
+    writes a confident, wrong BPM — worse than writing nothing."""
+    src = DSPSource(rate_per_hour=10**9)
+
+    class Resp:
+        @staticmethod
+        def json():
+            return {"results": [
+                {"trackName": "Something Else Entirely",
+                 "artistName": "A Different Band",
+                 "previewUrl": "http://itunes/wrong.m4a"},
+            ]}
+
+    monkeypatch.setattr("djset.enrichment.dsp.request", lambda *a, **k: Resp())
+    assert src._itunes_preview(T(title="Sun Rising", artist="Someone")) is None
+
+
+def test_a_good_itunes_match_is_taken(monkeypatch):
+    src = DSPSource(rate_per_hour=10**9)
+
+    class Resp:
+        @staticmethod
+        def json():
+            return {"results": [
+                {"trackName": "Sun Rising", "artistName": "Someone",
+                 "previewUrl": "http://itunes/right.m4a"},
+            ]}
+
+    monkeypatch.setattr("djset.enrichment.dsp.request", lambda *a, **k: Resp())
+    assert src._itunes_preview(T()) == "http://itunes/right.m4a"
+
+
+def test_without_ffmpeg_the_mp3_path_is_unaffected(monkeypatch):
+    """The transcode is optional. Its absence costs only the containers
+    libsndfile cannot read, never the ones it can."""
+    monkeypatch.setattr("djset.enrichment.dsp.shutil.which", lambda name: None)
+    import djset.enrichment.dsp as dsp
+
+    assert dsp._transcode("nonexistent.m4a") is None

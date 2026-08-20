@@ -134,3 +134,36 @@ def parse_camelot(camelot: str) -> tuple[int, str]:
     if not 1 <= n <= 12:
         raise ValueError(f"Camelot number out of range: {camelot!r}")
     return n, m.group(2).upper()
+
+
+def key_distance(a: str, b: str, *, energy_boost: bool = False) -> int | None:
+    """Harmonic distance between two Camelot codes, or None if incompatible.
+
+    0 = same key, 1 = adjacent on the wheel or relative major/minor,
+    2 = the optional +7 "energy boost" move.
+
+    Lives here rather than with the sequencer because it is arithmetic on the
+    wheel, not a policy about sets — and the key *analyser* needs the same
+    definition. When its top two candidates are compatible with each other the
+    ambiguity between them cannot produce a bad transition, which is only
+    knowable against this rule.
+    """
+    try:
+        an, al = parse_camelot(a)
+        bn, bl = parse_camelot(b)
+    except ValueError:
+        return None
+
+    if an == bn and al == bl:
+        return 0
+    if al == bl and (bn - an) % 12 in (1, 11):  # +/-1 around the wheel
+        return 1
+    if an == bn and al != bl:  # relative major/minor
+        return 1
+    if energy_boost and al == bl and (bn - an) % 12 == 7:
+        return 2
+    return None
+
+
+def key_compatible(a: str, b: str, *, energy_boost: bool = False) -> bool:
+    return key_distance(a, b, energy_boost=energy_boost) is not None

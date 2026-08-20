@@ -12,8 +12,10 @@ FROM python:3.13-slim AS base
 # libsndfile is what soundfile links against, and the DSP source needs it to
 # decode preview MP3s. Without it enrichment still runs, but --dsp silently
 # resolves nothing, which is the worst way to find out a dependency is missing.
+# ffmpeg covers the rest: iTunes previews are AAC, which libsndfile will not
+# read, and those are the tracks Deezer had no preview for in the first place.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libsndfile1 \
+ && apt-get install -y --no-install-recommends libsndfile1 ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

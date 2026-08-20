@@ -5,8 +5,11 @@ description: How to build, launch and drive djset to observe a change at its sur
 
 # Verifying djset
 
-Two surfaces: the CLI (`python -m djset.cli …`) and one PySide6 window.
-There is no server and no browser.
+Three surfaces: the CLI (`python -m djset.cli …`), a PySide6 window
+(`djset ui`), and a web app (`djset serve`, then http://127.0.0.1:8000).
+
+The web app is where the project is heading; the Qt window still works. Both
+read the same SQLite library, so a change to the engine shows up in both.
 
 ## Never disturb the live library
 
@@ -43,6 +46,25 @@ Network: `sync`, `artists`, `enrich`, `crosscheck`.
 - `crosscheck --against acousticbrainz` must **not** run while `enrich` is
   running — two processes sharing that budget risks a block.
 - `generate` without `--dry-run` creates a real playlist in the account.
+
+## Driving the web app
+
+`djset serve --port <n>` then drive the page with javascript_tool — it is far
+more precise than screenshots for reading state:
+
+```js
+document.getElementById('sources-summary').textContent
+[...document.querySelectorAll('#result tbody tr')].length
+```
+
+`preview_start` resolves `.claude/launch.json` against the *session* working
+directory, not this repo — if the session is rooted elsewhere it will start
+that project instead. Start the server yourself and open it with
+`preview_start {url}`.
+
+Routes worth driving: `/api/health` (proves which database is open),
+`/api/selection`, `/api/generate` (creates nothing), `/api/job`. Only
+`/api/export` writes to the Spotify account.
 
 ## Driving the window
 

@@ -159,11 +159,33 @@ async function refreshSelection() {
   $("sources-summary").textContent = sourcesSummary(data.pool);
   $("eligible").textContent = data.eligible.label;
   state.maxSet = data.max_set ?? 0;
+  renderBreakdown(data.breakdown);
   refreshTargetHint();
   renderGenres(data);
   // Enabled by source selection alone — never by genre selection.
   $("generate").disabled = state.selected.size === 0;
   refreshName();
+}
+
+function renderBreakdown(b) {
+  // "I picked 1,293 tracks and got 904" is a fair question and the app knows
+  // the answer, so it should not need asking.
+  const box = $("breakdown");
+  if (!b || !b.eligible || b.sequenceable === b.eligible) { box.hidden = true; return; }
+
+  const rows = [];
+  if (b.bpm_only)
+    rows.push([b.bpm_only, "have a BPM but no confident key, so they cannot be mixed harmonically"]);
+  const noData = b.no_key - b.bpm_only;
+  if (noData > 0)
+    rows.push([noData, "have no BPM or key at all — run Enrich BPM/key"]);
+  if (b.duplicates)
+    rows.push([b.duplicates, "are the same recording added to the playlist twice, so each plays once"]);
+
+  $("breakdown-list").innerHTML =
+    rows.map(([n, why]) => `<li><b>${n}</b> ${escapeHtml(why)}</li>`).join("") +
+    `<li><b>${b.sequenceable}</b> can be sequenced</li>`;
+  box.hidden = false;
 }
 
 function refreshTargetHint() {

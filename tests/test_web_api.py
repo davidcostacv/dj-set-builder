@@ -304,3 +304,64 @@ def test_whole_selection_places_everything_it_can(client):
     ).json()
     assert body["count"] == 5
     assert body["reached_target"] is True
+
+
+# ---------------------------------------------------------------------------
+# where the rest of the tracks went
+# ---------------------------------------------------------------------------
+#
+# Asked from real use: "I picked a 1,293-track playlist and got 904 — where are
+# the rest?" The app knew the whole answer already and made the user ask for
+# it. On that playlist: 68 never synced, 176 have no usable key (168 of them
+# BPM-only), and 144 are the same recording added to the playlist twice.
+
+
+def test_the_breakdown_accounts_for_every_eligible_track(client):
+    b = client.post("/api/selection", json={"sources": ["pl-a", "pl-b"]}).json()["breakdown"]
+
+    assert b["eligible"] == 5
+    assert b["sequenceable"] + b["no_key"] + b["duplicates"] == b["eligible"]
+
+
+def test_tracks_without_features_are_counted_as_no_key(client, monkeypatch):
+    """t5 is in neither playlist here, so add it and check it is accounted for."""
+    from djset import db
+    from djset.web import app as web_app
+
+    with db.session() as conn:
+        db.upsert_playlist_cache(conn, "pl-c", "Gamma", None, 2)
+        db.set_playlist_members(conn, "pl-c", [("t0", 0, None), ("t5", 1, None)])
+    web_app.library.load()
+
+    b = client.post("/api/selection", json={"sources": ["pl-c"]}).json()["breakdown"]
+    assert b["eligible"] == 2
+    assert b["no_key"] == 1          # t5 has no features
+    assert b["sequenceable"] == 1
+
+
+def test_bpm_only_tracks_are_named_separately_from_no_data(client):
+    """They are different problems: one needs a better source, the other needs
+    enrichment run at all."""
+    from djset import db
+    from djset.models import AudioFeatures
+    from djset.web import app as web_app
+
+    with db.session() as conn:
+        db.upsert_features(conn, AudioFeatures("t5", 120.0, None, source="deezer"))
+        db.upsert_playlist_cache(conn, "pl-d", "Delta", None, 1)
+        db.set_playlist_members(conn, "pl-d", [("t5", 0, None)])
+    web_app.library.load()
+
+    b = client.post("/api/selection", json={"sources": ["pl-d"]}).json()["breakdown"]
+    assert b["no_key"] == 1
+    assert b["bpm_only"] == 1        # has a tempo, key was dropped
+
+
+def test_the_breakdown_follows_the_genre_filter(client):
+    """It describes the current selection, not the library."""
+    b = client.post(
+        "/api/selection",
+        json={"sources": ["pl-a"], "genres": ["nonexistent"]},
+    ).json()["breakdown"]
+    assert b["eligible"] == 0
+    assert b["sequenceable"] == 0

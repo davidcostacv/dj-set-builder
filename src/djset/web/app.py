@@ -241,11 +241,31 @@ def selection(body: SelectionIn) -> dict[str, Any]:
     # typing the playlist's own size into the target deserves to see the real
     # number rather than discover it in a short set.
     filtered = filter_tracks(pool, chosen, library.artist_genres, library.aliases)
-    max_set = len(dedupe_recordings(sequenceable(filtered, library.features)))
+    ready = sequenceable(filtered, library.features)
+    unique = dedupe_recordings(ready)
+    max_set = len(unique)
 
+    # Where the tracks went. "I picked 1,293 and got 904" is a fair question,
+    # and the honest answer has three parts that the app already knows and was
+    # making the user ask for: no key, duplicate recordings, and rows that were
+    # never synced. Counted here so the UI can show it without a second call.
+    bpm_only = sum(
+        1
+        for t in filtered
+        if (f := library.features.get(t.spotify_id)) is not None
+        and f.bpm is not None
+        and f.key_camelot is None
+    )
     return {
         "pool": len(pool),
         "max_set": max_set,
+        "breakdown": {
+            "eligible": len(filtered),
+            "no_key": len(filtered) - len(ready),
+            "bpm_only": bpm_only,
+            "duplicates": len(ready) - len(unique),
+            "sequenceable": max_set,
+        },
         "genres": [
             {"name": s.name, "tracks": s.track_count, "enriched": s.enriched_count}
             for s in stats

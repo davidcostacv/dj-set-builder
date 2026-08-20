@@ -165,6 +165,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
                 progress=_enrich_progress,
                 refresh=args.refresh,
                 retry_misses=args.retry_misses,
+                retry_incomplete=args.retry_incomplete,
             )
         except KeyboardInterrupt:
             conn.commit()
@@ -175,6 +176,14 @@ def cmd_enrich(args: argparse.Namespace) -> int:
             f"\nconsidered={stats.considered} cached={stats.already_cached} "
             f"resolved={stats.resolved} missed={stats.missed} "
             f"skipped(retry limit)={stats.skipped_exhausted}"
+        )
+        # What a resolved answer actually did. Without this a --refresh
+        # pass reported thousands resolved while storing none of them,
+        # because a source already on file outranked every one.
+        print(
+            f"  of the {stats.resolved} resolved: {stats.written} written, "
+            f"{stats.keys_merged} contributed a key to an existing row, "
+            f"{stats.discarded} discarded (higher-trust source on file)"
         )
         print(f"\n{ATTRIBUTION_TEXT}")
     return 0
@@ -715,6 +724,13 @@ def _add_enrich_args(sp: argparse.ArgumentParser) -> None:
         action="store_true",
         help="re-attempt tracks that failed before, keeping cached hits — this "
         "is the flag to use after registering a new source",
+    )
+    sp.add_argument(
+        "--retry-incomplete",
+        action="store_true",
+        help="re-attempt rows that have a BPM but no key, keeping everything "
+        "already sequenceable — the flag to use when a source that supplies "
+        "keys was added after the rest of the library was built",
     )
     sp.add_argument("--no-deezer", action="store_true", help="disable the Deezer source")
     sp.add_argument(

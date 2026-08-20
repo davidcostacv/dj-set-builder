@@ -210,3 +210,58 @@ def test_a_keyless_source_still_writes_when_there_is_nothing_to_lose(
     written = db.all_features(conn)[t.spotify_id]
     assert written.source == "keyless"
     assert written.key_camelot is None
+
+
+# --------------------------------------------------------------------------
+# --retry-incomplete
+# --------------------------------------------------------------------------
+#
+# A row with a tempo and no key is not a miss — it was answered, just not
+# fully. `--refresh` reaches it only by re-attempting the whole library, and
+# `--retry-misses` does not reach it at all, so a source added later to supply
+# keys had no affordable way to be pointed at the tracks it exists to fix.
+
+
+class _Source:
+    """Answers with whatever it was handed, and remembers being asked."""
+
+    def __init__(self, name: str, priority: int, data: dict[str, AudioFeatures]):
+        self.name = name
+        self.priority = priority
+        self.data = data
+        self.calls: list[str] = []
+
+    def lookup(self, track: Track) -> AudioFeatures | None:
+        self.calls.append(track.spotify_id)
+        return self.data.get(track.spotify_id)
+
+
+def test_retry_incomplete_reaches_a_row_with_no_key(conn, track_factory):
+    t = track_factory(1)
+    db.upsert_track(conn, t)
+    db.upsert_features(
+        conn,
+        AudioFeatures(spotify_id="t1", bpm=124.0, key_camelot=None, source="deezer"),
+    )
+
+    dsp = _Source("dsp", 40, {"t1": AudioFeatures("t1", 123.4, "8A", source="dsp")})
+    stats = enrich_tracks(conn, Resolver([dsp]), [t], retry_incomplete=True)
+
+    assert stats.already_cached == 0
+    assert db.get_features(conn, "t1").key_camelot == "8A"
+
+
+def test_retry_incomplete_leaves_a_sequenceable_row_alone(conn, track_factory):
+    """The point of the flag is to be affordable: a complete row is not work."""
+    t = track_factory(1)
+    db.upsert_track(conn, t)
+    db.upsert_features(
+        conn,
+        AudioFeatures(spotify_id="t1", bpm=128.0, key_camelot="8A", source="getsongbpm"),
+    )
+
+    dsp = _Source("dsp", 40, {"t1": AudioFeatures("t1", 127.9, "9A", source="dsp")})
+    stats = enrich_tracks(conn, Resolver([dsp]), [t], retry_incomplete=True)
+
+    assert (stats.already_cached, dsp.calls) == (1, [])
+    assert db.get_features(conn, "t1").key_camelot == "8A"

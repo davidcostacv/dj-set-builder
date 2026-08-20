@@ -41,6 +41,11 @@ class AudioFeatures:
     key_open: str | None = None
     energy: float | None = None
     source: str = "unknown"
+    # Where `key_camelot` came from, which is not always `source`. Priority
+    # settles whose *tempo* to believe; a lower-trust source can still be the
+    # only one with a key, and that key is worth taking. Persisting the two
+    # separately keeps the row honest about itself.
+    key_source: str | None = None
     confidence: float | None = None
     fetched_at: str | None = None
 

@@ -28,7 +28,7 @@ def utcnow() -> str:
 
 # Bump when schema.sql or _ADDED_COLUMNS changes, so an existing database
 # picks the change up. Without a bump the setup below is skipped entirely.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
@@ -64,6 +64,7 @@ def _initialise(conn: sqlite3.Connection) -> None:
 # add them to a database that already exists, so they are applied explicitly.
 _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("tracks", "artist_names", "TEXT"),
+    ("audio_features", "key_source", "TEXT"),
 ]
 
 
@@ -72,7 +73,23 @@ def _migrate(conn: sqlite3.Connection) -> None:
         existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    _backfill_key_source(conn)
     _widen_export_identity(conn)
+
+
+def _backfill_key_source(conn: sqlite3.Connection) -> None:
+    """Every key already on file came from the row's own source.
+
+    Leaving these NULL would be indistinguishable from "provenance unknown",
+    when in fact it is known for every row written before the column existed:
+    a single source wrote the whole row.
+    """
+    changed = conn.execute(
+        "UPDATE audio_features SET key_source = source "
+        "WHERE key_camelot IS NOT NULL AND key_source IS NULL"
+    ).rowcount
+    if changed:
+        log.info("key_source backfilled from source for %d rows", changed)
 
 
 def _widen_export_identity(conn: sqlite3.Connection) -> None:
@@ -296,6 +313,7 @@ def _row_to_features(r: sqlite3.Row) -> AudioFeatures:
         key_open=r["key_open"],
         energy=r["energy"],
         source=r["source"],
+        key_source=r["key_source"],
         confidence=r["confidence"],
         fetched_at=r["fetched_at"],
     )
@@ -309,16 +327,25 @@ def all_features(conn: sqlite3.Connection) -> dict[str, AudioFeatures]:
 
 
 def upsert_features(conn: sqlite3.Connection, f: AudioFeatures) -> None:
+    # A source that wrote the whole row is also where its key came from, so
+    # every caller does not have to say so. Only a merged row — a key taken
+    # from somewhere other than the row's own source — sets this explicitly.
+    key_source = f.key_source
+    if f.key_camelot is not None and key_source is None:
+        key_source = f.source
+    elif f.key_camelot is None:
+        key_source = None      # no key, nowhere for it to have come from
+
     conn.execute(
         """
         INSERT INTO audio_features (spotify_id, bpm, key_camelot, key_open, energy,
-                                    source, confidence, fetched_at)
-        VALUES (?,?,?,?,?,?,?,?)
+                                    source, key_source, confidence, fetched_at)
+        VALUES (?,?,?,?,?,?,?,?,?)
         ON CONFLICT(spotify_id) DO UPDATE SET
           bpm=excluded.bpm, key_camelot=excluded.key_camelot,
           key_open=excluded.key_open, energy=excluded.energy,
-          source=excluded.source, confidence=excluded.confidence,
-          fetched_at=excluded.fetched_at
+          source=excluded.source, key_source=excluded.key_source,
+          confidence=excluded.confidence, fetched_at=excluded.fetched_at
         """,
         (
             f.spotify_id,
@@ -327,6 +354,7 @@ def upsert_features(conn: sqlite3.Connection, f: AudioFeatures) -> None:
             f.key_open,
             f.energy,
             f.source,
+            key_source,
             f.confidence,
             f.fetched_at or utcnow(),
         ),

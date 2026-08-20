@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS audio_features (
   key_camelot  TEXT,                 -- '8A', '11B', etc.
   key_open     TEXT,                 -- GetSongBPM open key notation
   energy       REAL,                 -- 0-1, nullable, source-dependent
-  source       TEXT NOT NULL,        -- 'rekordbox' | 'getsongbpm' | 'manual' | 'local_dsp'
+  source       TEXT NOT NULL,        -- 'rekordbox' | 'getsongbpm' | 'manual' | 'dsp'
+  key_source   TEXT,                 -- where key_camelot came from, when not `source`
   confidence   REAL,
   fetched_at   TEXT
 );

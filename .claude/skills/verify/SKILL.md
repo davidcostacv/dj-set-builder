@@ -28,6 +28,16 @@ export DJSET_DB_PATH=/tmp/v.sqlite3
 `DJSET_DB_PATH` overrides all database resolution and is the only safe way to
 drive without touching real data.
 
+**Take it back off before starting anything that produces results worth
+keeping.** It is inherited by every child process, including a `serve` started
+for a screenshot and any enrichment launched from that shell. An eleven-hour
+`--dsp` pass once wrote all 4,486 of its results into a scratch copy while the
+real library kept none of them, and the app — started from the same shell —
+reported the good numbers back, so nothing looked wrong from the browser.
+`/api/health` prints the open database precisely so this is checkable: read it
+before believing a coverage figure, and make sure a long run is pointed at
+`config.db_path()` rather than whatever the last verification set.
+
 ## Which database is real
 
 Under **Microsoft Store Python** the OS redirects writes to `%LOCALAPPDATA%`

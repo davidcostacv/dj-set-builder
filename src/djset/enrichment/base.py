@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
 from .. import db
@@ -48,13 +49,23 @@ class Resolver:
 
     # ------------------------------------------------------------------
     def resolve(self, track: Track) -> tuple[AudioFeatures | None, str | None]:
-        """Try every source in priority order.
+        """Try sources in priority order until the answer is complete.
 
         Returns ``(features, failure_reason)``; exactly one is non-None.
+
+        "Complete" means a tempo *and* a key, which is what sequencing needs.
+        Stopping at the first source to say anything was the wrong stopping
+        rule: Deezer answers for a great many tracks and never carries harmonic
+        data, so it ended the search with a half-answer and no lower-priority
+        source was ever asked. Once the tempo is settled the only thing still
+        worth looking for is a key, and the first source to have one supplies
+        it — recorded in ``key_source``, because it is not where the rest of
+        the row came from.
         """
         if not self.sources:
             return None, "no sources registered"
 
+        best: AudioFeatures | None = None
         reasons: list[str] = []
         for source in self.sources:
             try:
@@ -63,9 +74,28 @@ class Resolver:
                 log.warning("source %s raised on %s: %s", source.name, track.title, exc)
                 reasons.append(f"{source.name}: error {exc}")
                 continue
-            if found is not None:
-                return found, None
-            reasons.append(f"{source.name}: no match")
+            if found is None:
+                reasons.append(f"{source.name}: no match")
+                continue
+            if best is None:
+                best = found
+                if best.key_camelot is not None:
+                    return best, None
+                continue
+            # A more trusted source already settled the tempo. Take nothing but
+            # the key, and only from the first source that actually has one.
+            if found.key_camelot is not None:
+                return (
+                    replace(
+                        best,
+                        key_camelot=found.key_camelot,
+                        key_open=found.key_open,
+                        key_source=found.key_source or found.source,
+                    ),
+                    None,
+                )
+        if best is not None:
+            return best, None
         return None, "; ".join(reasons)
 
     # ------------------------------------------------------------------
@@ -100,6 +130,41 @@ class Resolver:
         return None
 
 
+def merged_with_key(
+    existing: AudioFeatures | None, candidate: AudioFeatures
+) -> AudioFeatures | None:
+    """``existing`` with ``candidate``'s key filled in, or None if not applicable.
+
+    Priority answers *whose tempo to believe*. It was being applied as *whose
+    row wins*, and the two are not the same question: Deezer outranks the DSP
+    analyser and has no harmonic data at all, so a Deezer row with a tempo and
+    no key discarded a perfectly good DSP key — after paying to compute it.
+    That was 670 tracks unsequenceable for want of a value the app already had.
+
+    This only ever fills a NULL. It never changes a tempo, never replaces a key,
+    and never touches a row a source with more standing already spoke for —
+    which is why, unlike :meth:`Resolver.should_overwrite`, it does not need to
+    fail closed on an unknown priority. Nothing is at risk of being lost.
+
+    :func:`_would_lose_the_key` in the runner guards the mirror image: a
+    higher-priority source that is *silent* on key must not erase one.
+    """
+    if existing is None or candidate.key_camelot is None:
+        return None
+    if existing.key_camelot is not None:
+        return None                      # nothing to fill; never a replacement
+    if existing.source == MANUAL_SOURCE:
+        return None                      # a hand-typed row is not amended
+
+    return replace(
+        existing,
+        key_camelot=candidate.key_camelot,
+        key_open=candidate.key_open,
+        key_source=candidate.key_source or candidate.source,
+        fetched_at=None,                 # stamped on write: the row changed now
+    )
+
+
 def set_manual_features(
     conn: sqlite3.Connection,
     spotify_id: str,
@@ -117,9 +182,15 @@ def set_manual_features(
     unsequenceable as before.
     """
     existing = db.all_features(conn).get(spotify_id)
+    # Whoever supplied the key still supplied it. Carrying the row over without
+    # this would relabel an inherited key as hand-typed, which is the one thing
+    # `manual` is supposed to mean.
+    key_source = MANUAL_SOURCE if key_camelot is not None else None
     if existing is not None:
         bpm = bpm if bpm is not None else existing.bpm
-        key_camelot = key_camelot if key_camelot is not None else existing.key_camelot
+        if key_camelot is None:
+            key_camelot = existing.key_camelot
+            key_source = existing.key_source
         energy = energy if energy is not None else existing.energy
 
     f = AudioFeatures(
@@ -129,6 +200,7 @@ def set_manual_features(
         key_open=None,
         energy=energy,
         source=MANUAL_SOURCE,
+        key_source=key_source,
         confidence=1.0,
     )
     db.upsert_features(conn, f)

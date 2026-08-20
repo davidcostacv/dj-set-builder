@@ -90,12 +90,37 @@ And the web build, in order:
 | W2 | Browser front end: the four panes | done |
 | W3 | Generate + save, driven from the browser | done |
 | W4 | Sync and enrich as background jobs with live progress | done |
-| W5 | OAuth against a non-loopback redirect | |
+| W5 | OAuth against a non-loopback redirect | done |
 | W6 | Deploy, with the database and secrets on the server | |
 
-W5 and W6 are deliberately last. Everything before them runs at `localhost`
-with the loopback redirect that already works, so the interface can be
-finished and used before hosting is introduced.
+W6 is deliberately last: everything before it runs at `localhost`, so the
+interface was finished and used before hosting was introduced.
+
+### Signing in from the browser
+
+`djset serve` prints the redirect URI to register, because a mismatch there is
+the most common way this fails and Spotify's error for it says nothing useful:
+
+```
+Redirect URI for this server:  http://127.0.0.1:8000/auth/callback
+  Add it at https://developer.spotify.com/dashboard -> your app -> Settings
+```
+
+The desktop flow runs a throwaway HTTP server on `127.0.0.1:8888` and does both
+halves of PKCE in one call, which works only while the app and the browser are
+on the same machine. The web flow makes the callback one of the app's own
+routes, so the same shape works at `http://127.0.0.1:8000/auth/callback` now
+and at `https://somewhere/auth/callback` once deployed — only the registered
+URI changes. Spotify accepts plain `http` for loopback only; anything else must
+be `https`, and the startup hint warns when the URI it derived would be
+rejected.
+
+The PKCE verifier never reaches the browser, and the state is single-use: it is
+spent when presented, not when the exchange succeeds, so a failed attempt does
+not leave a live state behind to replay. Both live in memory with a ten-minute
+expiry and a cap of 32 concurrent flows, since every `/auth/login` mints one.
+**That store is per-process** — a multi-process deployment would need it in
+shared storage, which is a W6 problem.
 
 ### Known limitations, measured rather than assumed
 

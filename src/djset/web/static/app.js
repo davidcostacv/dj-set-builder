@@ -404,8 +404,60 @@ function showHealth(h) {
     `${h.sequenceable.toLocaleString()} with BPM+key`;
 }
 
+// ---------------------------------------------------------------------------
+// authorization
+// ---------------------------------------------------------------------------
+
+const AUTH_ERRORS = {
+  access_denied: "You declined the Spotify authorization.",
+  missing_code: "Spotify came back without an authorization code.",
+  stale_or_unknown_state: "That sign-in attempt expired. Try again.",
+  exchange_failed:
+    "Spotify refused the authorization code. The usual cause is a redirect " +
+    "URI that does not exactly match the one registered in the dashboard.",
+};
+
+async function refreshAuth() {
+  const a = await api("/api/auth/status");
+  const state = $("auth-state");
+  const login = $("auth-login");
+  const logout = $("auth-logout");
+
+  if (!a.configured) {
+    state.textContent = "not configured — see .env";
+    state.classList.add("bad");
+    login.hidden = logout.hidden = true;
+    return a;
+  }
+  state.classList.toggle("bad", !a.authorized);
+  if (a.authorized) {
+    state.textContent = `signed in as ${a.user}`;
+    login.hidden = true;
+    logout.hidden = false;
+  } else {
+    state.textContent = a.detail ? "sign-in expired" : "not signed in";
+    login.hidden = false;
+    logout.hidden = true;
+  }
+  return a;
+}
+
+function reportAuthRedirect() {
+  // The callback lands here with a query string. Say what happened, then
+  // clean the URL so a refresh does not replay a stale message.
+  const params = new URLSearchParams(location.search);
+  const err = params.get("auth_error");
+  if (err) toast(AUTH_ERRORS[err] || `Spotify sign-in failed: ${err}`, true);
+  else if (params.get("authorized")) toast("Connected to Spotify");
+  if (err || params.get("authorized")) {
+    history.replaceState({}, "", location.pathname);
+  }
+}
+
 async function boot() {
   try {
+    reportAuthRedirect();
+    await refreshAuth();
     showHealth(await api("/api/health"));
     state.sources = await api("/api/sources");
     await refreshSelection();
@@ -456,4 +508,10 @@ $("job-cancel").addEventListener("click", async () => {
   $("job-cancel").disabled = true;
   await api("/api/job/cancel", {});
   toast("Stopping at the next checkpoint — progress is kept.");
+});
+
+$("auth-logout").addEventListener("click", async () => {
+  await api("/api/auth/logout", {});
+  await refreshAuth();
+  toast("Disconnected. Your library stays on disk.");
 });

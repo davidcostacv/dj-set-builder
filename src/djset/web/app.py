@@ -17,8 +17,8 @@ import logging
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -45,6 +45,7 @@ from ..spotify.auth import SpotifyAuth
 from ..spotify.client import SpotifyClient
 from ..spotify.sync import sync_artists, sync_playlists
 from .jobs import runner
+from .oauth import callback_uri, pending, registration_hint
 
 log = logging.getLogger(__name__)
 
@@ -372,6 +373,103 @@ def reorder(playlist_id: str, body: ExportIn) -> dict[str, Any]:
     except ExportError as exc:
         raise HTTPException(502, str(exc))
     return {"ok": True, "tracks": len(body.uris)}
+
+
+# ---------------------------------------------------------------------------
+# authorization
+# ---------------------------------------------------------------------------
+
+
+def _auth() -> SpotifyAuth:
+    return SpotifyAuth(load_config())
+
+
+@app.get("/api/auth/status")
+def auth_status() -> dict[str, Any]:
+    """Whether a saved login exists, and who it belongs to.
+
+    Deliberately does not refresh: this is called on every page load, and a
+    status check that silently spends a network round trip — or opens a browser
+    on the *server* when the token has expired — would be a trap.
+    """
+    try:
+        auth = _auth()
+    except ConfigError as exc:
+        return {"configured": False, "authorized": False, "detail": str(exc)}
+
+    if not auth.has_saved_login():
+        return {"configured": True, "authorized": False, "user": None}
+    try:
+        me = SpotifyClient(auth).me()
+        return {
+            "configured": True,
+            "authorized": True,
+            "user": me.get("display_name") or me.get("id"),
+        }
+    except Exception as exc:
+        # A saved token that no longer works is not the same as no token, and
+        # the page should say so rather than showing a logged-in state that
+        # fails on the first real request.
+        return {"configured": True, "authorized": False, "user": None,
+                "detail": f"Saved login is not usable: {exc}"}
+
+
+@app.get("/auth/login")
+def auth_login(request: Request) -> RedirectResponse:
+    """Send the browser to Spotify. The verifier stays here."""
+    try:
+        auth = _auth()
+    except ConfigError as exc:
+        raise HTTPException(500, str(exc))
+
+    redirect_uri = callback_uri(str(request.base_url))
+    url, verifier, state = auth.authorize_url(redirect_uri)
+    pending.start(state, verifier, redirect_uri)
+    log.info("authorization started; %s", registration_hint(redirect_uri))
+    return RedirectResponse(url, status_code=307)
+
+
+@app.get("/auth/callback")
+def auth_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> RedirectResponse:
+    """Spotify comes back here. Validate, exchange, then return to the app.
+
+    Every failure redirects to the page with a message rather than rendering an
+    error body, because this URL is in the address bar: leaving someone on a
+    dead-end page containing an authorization code is worse than sending them
+    back to something they can retry from.
+    """
+    if error:
+        return RedirectResponse(f"/?auth_error={error}", status_code=303)
+    if not code or not state:
+        return RedirectResponse("/?auth_error=missing_code", status_code=303)
+
+    flow = pending.claim(state)
+    if flow is None:
+        # Unknown, expired, or already redeemed — all the same answer. Saying
+        # which would help someone guessing at state values.
+        return RedirectResponse("/?auth_error=stale_or_unknown_state", status_code=303)
+
+    try:
+        _auth().exchange_code(code, flow.verifier, flow.redirect_uri)
+    except Exception as exc:
+        log.warning("token exchange failed: %s", exc)
+        return RedirectResponse("/?auth_error=exchange_failed", status_code=303)
+    return RedirectResponse("/?authorized=1", status_code=303)
+
+
+@app.post("/api/auth/logout")
+def auth_logout() -> dict[str, Any]:
+    """Forget the saved login. Spotify is not told; this is local only."""
+    try:
+        _auth().store.clear()
+    except ConfigError as exc:
+        raise HTTPException(500, str(exc))
+    return {"authorized": False}
 
 
 # ---------------------------------------------------------------------------

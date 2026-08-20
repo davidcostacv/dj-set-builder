@@ -164,25 +164,75 @@ class SpotifyAuth:
         return {"Authorization": f"Bearer {self.force_refresh()}"}
 
     # ------------------------------------------------------------------
+    def authorize_url(self, redirect_uri: str | None = None) -> tuple[str, str, str]:
+        """``(url, verifier, state)`` — the first half of the PKCE flow.
+
+        Split out of :meth:`login` so a web server can serve the two halves as
+        separate requests. The desktop flow runs a throwaway HTTP server and
+        does both in one call; a web app redirects the browser and gets the
+        callback on its own route, which is the only shape that works once the
+        redirect URI is not loopback.
+
+        The verifier is returned rather than stored: the caller decides where
+        it lives for the seconds between the two halves, and it must never
+        leave the server that will exchange it.
+        """
+        verifier, challenge = _pkce_pair()
+        state = secrets.token_urlsafe(16)
+        params = {
+            "client_id": self.config.spotify_client_id,
+            "response_type": "code",
+            "redirect_uri": redirect_uri or self.config.spotify_redirect_uri,
+            "code_challenge_method": "S256",
+            "code_challenge": challenge,
+            "state": state,
+            "scope": self.config.scopes,
+        }
+        return f"{AUTH_URL}?{urllib.parse.urlencode(params)}", verifier, state
+
+    def exchange_code(
+        self, code: str, verifier: str, redirect_uri: str | None = None
+    ) -> str:
+        """The second half: swap the authorization code for tokens.
+
+        ``redirect_uri`` is sent again because Spotify checks it matches the
+        one the code was issued against; it is not used to redirect anything.
+        """
+        try:
+            resp = request(
+                "POST",
+                TOKEN_URL,
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": redirect_uri or self.config.spotify_redirect_uri,
+                    "client_id": self.config.spotify_client_id,
+                    "code_verifier": verifier,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        except HttpError as exc:
+            # Never echo the code or the verifier — this lands in logs.
+            raise AuthError(
+                f"Spotify rejected the authorization code (HTTP {exc.status}). "
+                "The most common cause is a redirect URI that does not exactly "
+                "match the one registered in the Spotify dashboard."
+            ) from exc
+        payload = resp.json()
+        self.store.set_access(
+            payload["access_token"], int(payload.get("expires_in", 3600))
+        )
+        if payload.get("refresh_token"):
+            self.store.save_refresh(payload["refresh_token"])
+        return payload["access_token"]
+
     def login(self, *, timeout: float = 180.0) -> str:
         """Run the interactive PKCE flow. Opens a browser, waits for callback."""
         parsed = urllib.parse.urlparse(self.config.spotify_redirect_uri)
         host = parsed.hostname or "127.0.0.1"
         port = parsed.port or 8888
 
-        verifier, challenge = _pkce_pair()
-        state = secrets.token_urlsafe(16)
-
-        params = {
-            "client_id": self.config.spotify_client_id,
-            "response_type": "code",
-            "redirect_uri": self.config.spotify_redirect_uri,
-            "code_challenge_method": "S256",
-            "code_challenge": challenge,
-            "state": state,
-            "scope": self.config.scopes,
-        }
-        url = f"{AUTH_URL}?{urllib.parse.urlencode(params)}"
+        url, verifier, state = self.authorize_url()
 
         log.info("Opening browser for Spotify authorization…")
         log.info("If it does not open, paste this into your browser:\n%s", url)
@@ -199,24 +249,9 @@ class SpotifyAuth:
         if not code:
             raise AuthError(f"No authorization code in callback: {result}")
 
-        resp = request(
-            "POST",
-            TOKEN_URL,
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": self.config.spotify_redirect_uri,
-                "client_id": self.config.spotify_client_id,
-                "code_verifier": verifier,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        payload = resp.json()
-        self.store.set_access(payload["access_token"], int(payload.get("expires_in", 3600)))
-        if payload.get("refresh_token"):
-            self.store.save_refresh(payload["refresh_token"])
+        token = self.exchange_code(code, verifier)
         log.info("Authorized. Refresh token saved to the OS keyring.")
-        return payload["access_token"]
+        return token
 
     # ------------------------------------------------------------------
     def _refresh(self, refresh_token: str) -> str:

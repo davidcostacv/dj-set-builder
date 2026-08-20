@@ -363,7 +363,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(f"The web interface needs fastapi and uvicorn: {exc}")
         print("  pip install fastapi uvicorn")
         return 1
-    print(f"djset web on http://{args.host}:{args.port}  (Ctrl+C to stop)")
+    from .web.oauth import callback_uri, registration_hint
+
+    base = f"http://{args.host}:{args.port}"
+    print(f"djset web on {base}  (Ctrl+C to stop)")
+    # Printed unprompted because a redirect URI that does not match the
+    # registered one is the single most common way this fails, and Spotify's
+    # error for it says nothing useful.
+    print()
+    print(registration_hint(callback_uri(base)))
+    print("  Add it at https://developer.spotify.com/dashboard -> your app -> Settings")
+    print()
     return serve(host=args.host, port=args.port, reload=args.reload)
 
 

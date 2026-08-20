@@ -34,7 +34,18 @@
   <!-- 1 -->
   <section class="pane" id="pane-sources">
     <h2>1 · Sources</h2>
-    <input type="search" id="source-filter" placeholder="Filter playlists…" autocomplete="off">
+    <div class="row">
+      <label class="field grow">Filter
+        <input type="search" id="source-filter" placeholder="Filter playlists…" autocomplete="off">
+      </label>
+      <label class="field">Sort by
+        <select id="source-sort">
+          <option value="name">name</option>
+          <option value="tracks-desc">most tracks</option>
+          <option value="tracks-asc">fewest tracks</option>
+        </select>
+      </label>
+    </div>
     <div id="sources" class="scroll" role="group" aria-label="Playlists"></div>
     <p id="sources-summary" class="summary">No source selected</p>
   </section>

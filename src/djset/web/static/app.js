@@ -76,11 +76,28 @@ const selection = () => ({
 // pane 1
 // ---------------------------------------------------------------------------
 
+// The server returns playlists by name. Sorting by size is how you find the
+// big ones worth building a set from — and the small ones worth merging —
+// without reading 216 rows. Name stays the default because it is the only
+// order in which a playlist you are looking for is where you expect it.
+const SORT_KEY = "djset.sourceSort";
+
+function sortedSources() {
+  const how = $("source-sort").value;
+  const rows = [...state.sources];
+  if (how === "name") return rows;               // already name-sorted server-side
+  const dir = how === "tracks-asc" ? 1 : -1;
+  // Name breaks ties, so equal-sized playlists do not shuffle between renders.
+  return rows.sort(
+    (a, b) => dir * (a.tracks - b.tracks) || a.name.localeCompare(b.name),
+  );
+}
+
 function renderSources() {
   const needle = $("source-filter").value.trim().toLowerCase();
   const box = $("sources");
   box.innerHTML = "";
-  for (const s of state.sources) {
+  for (const s of sortedSources()) {
     if (needle && !s.name.toLowerCase().includes(needle)) continue;
     const row = document.createElement("label");
     row.className = "item";
@@ -560,6 +577,14 @@ async function boot() {
 }
 
 $("source-filter").addEventListener("input", renderSources);
+$("source-sort").addEventListener("change", () => {
+  try { localStorage.setItem(SORT_KEY, $("source-sort").value); } catch {}
+  renderSources();
+});
+try {
+  const saved = localStorage.getItem(SORT_KEY);
+  if (saved) $("source-sort").value = saved;
+} catch {}
 $("genre-toggle").addEventListener("click", () => {
   const now = !expanded();
   $("genre-toggle").setAttribute("aria-expanded", String(now));

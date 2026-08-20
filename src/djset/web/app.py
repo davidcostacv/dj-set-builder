@@ -27,9 +27,11 @@ from ..config import ConfigError, db_path, load_config
 from ..enrichment import Resolver, default_sources, enrich_tracks
 from ..export import ExportError, export_to_spotify, update_playlist_order
 from ..filtering import (
+    dedupe_recordings,
     filter_tracks,
     genre_availability,
     genre_index,
+    sequenceable,
     summarize,
 )
 from ..models import Track
@@ -232,8 +234,18 @@ def selection(body: SelectionIn) -> dict[str, Any]:
     summary = summarize(
         pool, chosen, library.artist_genres, library.aliases, library.features
     )
+    # The honest ceiling for a set from this selection. Not the same as
+    # `eligible.enriched`: that counts tracks with BPM and key, and the
+    # sequencer then collapses different pressings of one recording, so a
+    # playlist showing 1,049 ready tracks can only ever yield 904. Someone
+    # typing the playlist's own size into the target deserves to see the real
+    # number rather than discover it in a short set.
+    filtered = filter_tracks(pool, chosen, library.artist_genres, library.aliases)
+    max_set = len(dedupe_recordings(sequenceable(filtered, library.features)))
+
     return {
         "pool": len(pool),
+        "max_set": max_set,
         "genres": [
             {"name": s.name, "tracks": s.track_count, "enriched": s.enriched_count}
             for s in stats

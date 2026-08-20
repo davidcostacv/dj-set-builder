@@ -255,3 +255,52 @@ def test_the_page_is_served(client):
 def test_the_static_assets_are_served(client):
     for asset in ("/static/app.js", "/static/app.css"):
         assert client.get(asset).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# the ceiling a set can reach
+# ---------------------------------------------------------------------------
+#
+# Reported from real use: a 1,293-track playlist, target 1,293, produced 517
+# tracks and an explanation. The explanation was true — the strict search never
+# pads a short set, deliberately — but nothing said beforehand that 1,293 was
+# impossible, and nothing pointed at the mode that places every track.
+
+
+def test_selection_reports_the_largest_set_it_could_build(client):
+    body = client.post("/api/selection", json={"sources": ["pl-a", "pl-b"]}).json()
+    assert body["max_set"] == 5          # t0..t4 have features; t5 does not
+
+
+def test_the_ceiling_excludes_tracks_with_no_bpm_or_key(client):
+    """`pool` counts everything; `max_set` counts what can be sequenced."""
+    body = client.post("/api/selection", json={"sources": ["pl-a", "pl-b"]}).json()
+    assert body["pool"] == 5
+    assert body["max_set"] <= body["pool"]
+
+
+def test_the_ceiling_follows_the_genre_filter(client):
+    """It describes the current selection, not the library."""
+    empty = client.post(
+        "/api/selection", json={"sources": ["pl-a"], "genres": ["nonexistent-genre"]}
+    ).json()
+    assert empty["max_set"] == 0
+
+
+def test_asking_for_more_than_the_ceiling_still_refuses_to_pad(client):
+    """The engine's honesty is a designed property and stays. What changed is
+    that the UI now says the ceiling first, and offers 'whole selection'."""
+    body = client.post(
+        "/api/generate", json={"sources": ["pl-a"], "target_value": 500}
+    ).json()
+    assert body["reached_target"] is False
+    assert body["count"] < 500
+    assert body["explain"]
+
+
+def test_whole_selection_places_everything_it_can(client):
+    body = client.post(
+        "/api/generate", json={"sources": ["pl-a", "pl-b"], "target_kind": "all"}
+    ).json()
+    assert body["count"] == 5
+    assert body["reached_target"] is True

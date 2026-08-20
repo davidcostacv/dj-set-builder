@@ -14,6 +14,7 @@ const state = {
   selected: new Set(),
   genres: new Set(),    // empty => no filter
   picked: null,         // hand-picked subset, or null
+  maxSet: 0,            // most tracks a set from this selection can hold
   set: [],              // current result rows
   playlistId: null,
   dirty: false,
@@ -27,12 +28,32 @@ async function api(path, body) {
     headers: body === undefined ? {} : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!res.ok) {
-    let detail = `${res.status} ${res.statusText}`;
-    try { detail = (await res.json()).detail ?? detail; } catch { /* keep status */ }
-    throw new Error(detail);
-  }
+  if (!res.ok) throw new Error(await errorText(res));
   return res.json();
+}
+
+async function errorText(res) {
+  // FastAPI answers a validation failure with `detail` as a *list* of objects,
+  // not a string. Passing that straight to new Error() rendered the toast as
+  // "[object Object]" — the message said nothing at all, which is worse than
+  // no message because it looks like the app broke rather than the request.
+  let body;
+  try { body = await res.json(); } catch { return `${res.status} ${res.statusText}`; }
+
+  const detail = body?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(fieldError).join("; ") || `${res.status} ${res.statusText}`;
+  }
+  return `${res.status} ${res.statusText}`;
+}
+
+function fieldError(e) {
+  // loc is ["body", "target_value"]; the caller cares about the field, not
+  // that it was in the body.
+  const field = Array.isArray(e?.loc) ? e.loc.filter(p => p !== "body").join(".") : "";
+  const msg = e?.msg || "is not valid";
+  return field ? `${field}: ${msg}` : msg;
 }
 
 let toastTimer;
@@ -137,10 +158,37 @@ async function refreshSelection() {
   const data = await api("/api/selection", selection());
   $("sources-summary").textContent = sourcesSummary(data.pool);
   $("eligible").textContent = data.eligible.label;
+  state.maxSet = data.max_set ?? 0;
+  refreshTargetHint();
   renderGenres(data);
   // Enabled by source selection alone — never by genre selection.
   $("generate").disabled = state.selected.size === 0;
   refreshName();
+}
+
+function refreshTargetHint() {
+  // Asking for more tracks than exist is the one request the strict search
+  // cannot satisfy, and it answers with a short set and an explanation — which
+  // is honest but reads as a failure. Say the ceiling *before* they press
+  // Generate, and offer the mode that does what they meant.
+  const hint = $("target-hint");
+  const wanted = Number($("target-value").value);
+  const kind = $("target-kind").value;
+
+  if (kind !== "tracks" || !state.maxSet || !wanted || wanted <= state.maxSet) {
+    hint.hidden = true;
+    return;
+  }
+  hint.innerHTML =
+    `Only ${state.maxSet} tracks here can be sequenced, so a set of ` +
+    `${wanted} is not possible. ` +
+    `<button id="use-whole" class="small">Order all ${state.maxSet}</button>`;
+  hint.hidden = false;
+  $("use-whole").addEventListener("click", () => {
+    $("target-kind").value = "all";
+    refreshTargetHint();
+    refreshName();
+  });
 }
 
 function refreshName() {
@@ -242,7 +290,7 @@ async function generate() {
       (data.compromises ? ` · ${data.compromises} forced` : "");
     $("result-status").textContent = data.reached_target
       ? "Set ready. Nothing has been written to Spotify yet."
-      : data.explain;
+      : shortSetMessage(data);
     $("save").disabled = data.count === 0;
     $("copy").disabled = $("open").disabled = $("update").disabled = true;
     $("link").innerHTML = "";
@@ -252,6 +300,18 @@ async function generate() {
     btn.disabled = state.selected.size === 0;
     btn.textContent = "Generate set";
   }
+}
+
+function shortSetMessage(data) {
+  // The engine never pads a short set — it says what ran out, deliberately.
+  // What it cannot know is that "whole selection" would have placed the rest,
+  // so the UI adds the part the user can act on.
+  let text = data.explain;
+  if ($("target-kind").value === "tracks" && data.count < data.requested) {
+    text += ' Switch Target to "whole selection" to place every one of them, ' +
+      "accepting some rough transitions.";
+  }
+  return text;
 }
 
 async function save() {
@@ -494,8 +554,9 @@ $("copy").addEventListener("click", async () => {
 });
 $("open").addEventListener("click", () => window.open($("link").textContent, "_blank"));
 for (const el of ["target-kind", "target-value", "tolerance"]) {
-  $(el).addEventListener("change", refreshName);
+  $(el).addEventListener("change", () => { refreshName(); refreshTargetHint(); });
 }
+$("target-value").addEventListener("input", refreshTargetHint);
 document.querySelectorAll('input[name=mode]').forEach((r) =>
   r.addEventListener("change", refreshName));
 

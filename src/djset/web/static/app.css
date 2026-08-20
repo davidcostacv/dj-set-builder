@@ -196,3 +196,10 @@ a.button {
 }
 a.button:hover { filter: brightness(1.1); }
 #auth-state.bad { color: var(--warn); }
+
+#target-hint { color: var(--warn); }
+#target-hint button {
+  padding: .15rem .45rem;
+  font-size: .76rem;
+  margin-left: .35rem;
+}

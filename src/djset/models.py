@@ -33,6 +33,12 @@ class Track:
         return self.artist
 
 
+# The source that measures audio instead of consulting a catalogue. Named here
+# rather than in the analyser so the two cannot drift apart: `DSPSource.name`
+# is this constant.
+MEASURED_SOURCE = "dsp"
+
+
 @dataclass(frozen=True)
 class AudioFeatures:
     spotify_id: str
@@ -53,6 +59,19 @@ class AudioFeatures:
     def is_usable(self) -> bool:
         """Has enough data to participate in BPM+key sequencing."""
         return self.bpm is not None and self.key_camelot is not None
+
+    @property
+    def key_is_estimated(self) -> bool:
+        """Whether the key was measured from audio rather than looked up.
+
+        Measured against the catalogues on a sample of 67 tracks, the analyser
+        agreed exactly 55% of the time and landed on an adjacent Camelot code
+        — which still mixes — a further 18%. The remaining quarter conflicts.
+        That is good enough to sequence with and not good enough to present as
+        if somebody had verified it, so anything showing a key should be able
+        to say which kind it is.
+        """
+        return (self.key_source or self.source) == MEASURED_SOURCE
 
 
 @dataclass(frozen=True)

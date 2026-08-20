@@ -466,3 +466,41 @@ def test_an_unchanged_asset_still_answers_304(client):
     again = client.get("/static/app.js", headers={"If-None-Match": etag})
     assert again.status_code == 304
     assert again.content == b""
+
+
+# ---------------------------------------------------------------------------
+# telling a measured key from a looked-up one
+# ---------------------------------------------------------------------------
+#
+# Against the catalogues on a 67-track sample the analyser agreed exactly 55%
+# of the time and landed on an adjacent — still mixable — Camelot code a
+# further 18%. The remaining quarter conflicts. Good enough to sequence with,
+# not good enough to sit unmarked next to a value GetSongBPM stands behind.
+
+
+def test_a_measured_key_is_flagged_in_the_payload(client):
+    from djset import db
+    from djset.models import AudioFeatures
+    from djset.web import app as web_app
+
+    # Give every track in the pool a measured key, so the assertion below
+    # cannot pass by the one track under test simply not being picked.
+    with db.session() as conn:
+        ids = list(web_app.library.by_id)
+        for tid in ids:
+            db.upsert_features(conn, AudioFeatures(
+                spotify_id=tid, bpm=128.0, key_camelot="8A", source="dsp"))
+    web_app.library.load()
+
+    rows = client.post("/api/generate", json={"sources": ["pl-a"]}).json()["tracks"]
+    assert rows, "nothing sequenced, so nothing was actually checked"
+    assert all(r["key_estimated"] is True for r in rows)
+    assert all(r["key_source"] == "dsp" for r in rows)
+
+
+def test_a_catalogue_key_is_not_flagged(client):
+    rows = client.post("/api/generate", json={"sources": ["pl-a"]}).json()["tracks"]
+    assert rows
+    for r in rows:
+        if r["key"] and r["key_source"] != "dsp":
+            assert r["key_estimated"] is False

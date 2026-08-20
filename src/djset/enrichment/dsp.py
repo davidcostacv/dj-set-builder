@@ -50,7 +50,7 @@ import tempfile
 from typing import Any
 
 from ..camelot import key_distance, to_camelot
-from ..models import AudioFeatures, Track
+from ..models import MEASURED_SOURCE, AudioFeatures, Track
 from ..net import HttpError, RateLimiter, request
 from .normalize import normalize_artist, normalize_title, similarity
 
@@ -89,7 +89,7 @@ _MINOR = (6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17
 
 
 class DSPSource:
-    name = "dsp"
+    name = MEASURED_SOURCE
     priority = 40
 
     def __init__(self, rate_per_hour: int = DEFAULT_RATE_PER_HOUR) -> None:

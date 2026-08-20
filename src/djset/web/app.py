@@ -188,6 +188,11 @@ def _track_json(t: Track, features: dict[str, Any]) -> dict[str, Any]:
         "bpm": f.bpm if f else None,
         "key": f.key_camelot if f else None,
         "source": f.source if f else None,
+        # Where the *key* came from, which is not always where the row came
+        # from — a Deezer row can carry a key the analyser supplied — and
+        # whether that means it was measured rather than looked up.
+        "key_source": f.key_source if f else None,
+        "key_estimated": bool(f and f.key_camelot and f.key_is_estimated),
     }
 
 

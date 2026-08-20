@@ -286,3 +286,28 @@ def test_key_provenance_is_backfilled_for_rows_written_before_the_column(
     conn.execute("UPDATE audio_features SET key_source = NULL")
     db._backfill_key_source(conn)
     assert db.get_features(conn, "t1").key_source == "getsongbpm"
+
+
+def test_a_key_borrowed_from_the_analyser_is_still_an_estimate():
+    """The row came from Deezer; the key did not. Whether it was *measured*
+    follows the key, not the row, or a merged row would present an estimate as
+    if a catalogue had supplied it."""
+    merged = AudioFeatures(
+        spotify_id="t1", bpm=124.0, key_camelot="8A",
+        source="deezer", key_source="dsp",
+    )
+    assert merged.key_is_estimated is True
+
+    looked_up = AudioFeatures(
+        spotify_id="t2", bpm=128.0, key_camelot="8A",
+        source="getsongbpm", key_source="getsongbpm",
+    )
+    assert looked_up.key_is_estimated is False
+
+
+def test_the_analyser_and_the_flag_cannot_drift_apart():
+    """`DSPSource.name` *is* the constant the flag tests against."""
+    from djset.enrichment.dsp import DSPSource
+    from djset.models import MEASURED_SOURCE
+
+    assert DSPSource.name == MEASURED_SOURCE

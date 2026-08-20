@@ -127,6 +127,10 @@ tbody tr.dragging { opacity: .4; }
 tbody tr.over { border-top: 2px solid var(--accent); }
 tbody tr { cursor: grab; }
 
+/* Marks a key the analyser measured rather than one a catalogue supplied.
+   Deliberately quiet: it qualifies the value, it is not a warning. */
+.est { color: var(--warn); margin-left: .15rem; cursor: help; font-weight: 600; }
+
 .t-excellent { color: var(--good); }
 .t-good { color: var(--good); opacity: .8; }
 .t-fair { color: var(--warn); }

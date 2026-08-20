@@ -374,7 +374,40 @@ def cmd_serve(args: argparse.Namespace) -> int:
     print(registration_hint(callback_uri(base)))
     print("  Add it at https://developer.spotify.com/dashboard -> your app -> Settings")
     print()
-    return serve(host=args.host, port=args.port, reload=args.reload)
+    return serve(
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        proxy_headers=args.proxy_headers,
+        forwarded_allow_ips=args.forwarded_allow_ips,
+    )
+
+
+def cmd_token(args: argparse.Namespace) -> int:
+    """Print the saved refresh token, for moving it to a server's secret store.
+
+    A server has no OS keyring, so a hosted deployment reads the token from
+    SPOTIFY_REFRESH_TOKEN instead. There is no way to get it there without
+    reading it out once, so this exists rather than leaving people to dig
+    through Credential Manager. It prints only when asked twice — the flag is
+    there so it cannot happen by tab-completion — and the value is yours
+    already; treat it like a password, because it is one.
+    """
+    auth = SpotifyAuth(load_config())
+    token = auth.store.load_refresh()
+    if not token:
+        print("No saved login. Run `djset login` first.")
+        return 1
+    if not args.show:
+        print("A refresh token is saved.")
+        print()
+        print("It grants access to your Spotify account until you revoke it.")
+        print("To move it to a server, re-run with --show and paste the value")
+        print("into that platform's secret store as SPOTIFY_REFRESH_TOKEN.")
+        print("Do not commit it, and do not paste it into a shared terminal.")
+        return 0
+    print(token)
+    return 0
 
 
 def cmd_about(args: argparse.Namespace) -> int:
@@ -612,10 +645,34 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("doctor", help="probe the API surface against the build brief")
     sp.set_defaults(func=cmd_doctor)
 
+    sp = sub.add_parser(
+        "token", help="check for a saved refresh token, or reveal it for a server"
+    )
+    sp.add_argument(
+        "--show",
+        action="store_true",
+        help="print the token itself. Treat it like a password: it grants "
+        "access to your account until revoked",
+    )
+    sp.set_defaults(func=cmd_token)
+
     sp = sub.add_parser("serve", help="serve the browser interface at localhost")
     sp.add_argument("--host", default="127.0.0.1")
     sp.add_argument("--port", type=int, default=8000)
     sp.add_argument("--reload", action="store_true", help="reload on source changes")
+    sp.add_argument(
+        "--proxy-headers",
+        action="store_true",
+        help="trust X-Forwarded-Proto/Host. Required behind a TLS-terminating "
+        "proxy, or the OAuth redirect URI is derived as plain http against an "
+        "internal address and Spotify refuses it. Only enable when something "
+        "you trust sits in front — these headers are trivially forged.",
+    )
+    sp.add_argument(
+        "--forwarded-allow-ips",
+        default="127.0.0.1",
+        help="which peers may set those headers (default: 127.0.0.1; '*' trusts any)",
+    )
     sp.set_defaults(func=cmd_serve)
 
     sp = sub.add_parser("about", help="paths and required attribution")

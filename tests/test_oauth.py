@@ -268,3 +268,77 @@ def test_a_saved_but_broken_login_is_not_reported_as_signed_in(client, monkeypat
     body = client.get("/api/auth/status").json()
     assert body["authorized"] is False
     assert "not usable" in body["detail"]
+
+
+# ---------------------------------------------------------------------------
+# hosted: the redirect URI a proxy leaves behind — step W6
+# ---------------------------------------------------------------------------
+#
+# Uvicorn's proxy handling rewrites the scheme from X-Forwarded-Proto but not
+# the host. Driven at a running server with --proxy-headers, a request carrying
+# `X-Forwarded-Proto: https, X-Forwarded-Host: djset.example.com` produced
+# `https://127.0.0.1:8780/auth/callback` — right scheme, wrong host, and
+# Spotify refuses it without explaining why.
+
+
+def test_an_explicit_public_url_wins_over_what_the_request_says(monkeypatch):
+    from djset.web import oauth
+
+    monkeypatch.setenv("DJSET_PUBLIC_URL", "https://djset.example.com")
+    assert oauth.callback_uri("http://0.0.0.0:8000/") == (
+        "https://djset.example.com/auth/callback"
+    )
+
+
+def test_a_trailing_slash_on_the_public_url_does_not_double_up(monkeypatch):
+    from djset.web import oauth
+
+    monkeypatch.setenv("DJSET_PUBLIC_URL", "https://djset.example.com/")
+    assert oauth.callback_uri("http://x/") == "https://djset.example.com/auth/callback"
+
+
+def test_without_an_override_it_still_derives_from_the_request(monkeypatch):
+    from djset.web import oauth
+
+    monkeypatch.delenv("DJSET_PUBLIC_URL", raising=False)
+    assert oauth.callback_uri("http://127.0.0.1:9000/") == (
+        "http://127.0.0.1:9000/auth/callback"
+    )
+
+
+def test_a_bind_address_is_flagged(monkeypatch):
+    """0.0.0.0 is somewhere to listen, not somewhere to reach."""
+    from djset.web import oauth
+
+    monkeypatch.delenv("DJSET_PUBLIC_URL", raising=False)
+    assert "internal address" in oauth.registration_hint(
+        "https://0.0.0.0:8000/auth/callback"
+    )
+
+
+def test_loopback_over_https_is_flagged_as_a_proxy_that_kept_our_host(monkeypatch):
+    from djset.web import oauth
+
+    monkeypatch.delenv("DJSET_PUBLIC_URL", raising=False)
+    assert "internal address" in oauth.registration_hint(
+        "https://127.0.0.1:8000/auth/callback"
+    )
+
+
+def test_ordinary_local_use_is_not_nagged(monkeypatch):
+    """Plain http on loopback is how this is run every day."""
+    from djset.web import oauth
+
+    monkeypatch.delenv("DJSET_PUBLIC_URL", raising=False)
+    assert "WARNING" not in oauth.registration_hint(
+        "http://127.0.0.1:8000/auth/callback"
+    )
+
+
+def test_a_configured_deployment_is_not_nagged(monkeypatch):
+    from djset.web import oauth
+
+    monkeypatch.setenv("DJSET_PUBLIC_URL", "https://djset.example.com")
+    assert "WARNING" not in oauth.registration_hint(
+        oauth.callback_uri("http://0.0.0.0:8000/")
+    )

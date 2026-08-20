@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import os
 import secrets
 import threading
 import time
@@ -88,29 +89,65 @@ def _serve_until_result(server: HTTPServer, timeout: float) -> None:
         server.handle_request()
 
 
+# A refresh token supplied by the environment. This is how a *server* holds
+# one: containers have no OS keyring, and the alternative would be writing the
+# token to disk in the clear, which this app has always refused to do. Set it
+# from the hosting platform's secret store, so encryption at rest is that
+# platform's job rather than something reimplemented here.
+_ENV_REFRESH_TOKEN = "SPOTIFY_REFRESH_TOKEN"
+
+
 class TokenStore:
-    """Refresh token in the OS keyring; access token in memory only."""
+    """Refresh token in the OS keyring or the environment; access token in memory.
+
+    The environment wins when set, and is read-only: a token supplied that way
+    came from a secret store this app cannot write back to. A fresh
+    authorization on a server therefore updates only the in-memory access
+    token, and the operator has to update the secret themselves — said out loud
+    at the time rather than discovered at the next restart.
+    """
 
     def __init__(self) -> None:
         self._access: str | None = None
         self._expires_at: float = 0.0
 
     # -- refresh token (persisted) --
+    @property
+    def env_supplied(self) -> bool:
+        return bool(os.environ.get(_ENV_REFRESH_TOKEN, "").strip())
+
     def load_refresh(self) -> str | None:
+        from_env = os.environ.get(_ENV_REFRESH_TOKEN, "").strip()
+        if from_env:
+            return from_env
         try:
             return keyring.get_password(_KEYRING_SERVICE, _KEYRING_USER)
         except KeyringError as exc:
             raise AuthError(
                 f"No usable OS keyring backend: {exc}\n"
                 "The refresh token must be stored encrypted at rest, so the app "
-                "will not fall back to a plaintext file."
+                "will not fall back to a plaintext file. On a server, set "
+                f"{_ENV_REFRESH_TOKEN} from your platform's secret store — run "
+                "`djset token` on a machine with a keyring to read it out."
             ) from exc
 
     def save_refresh(self, token: str) -> None:
+        if self.env_supplied:
+            # There is nothing to write to. Warn once rather than let the
+            # operator believe a fresh authorization survived a restart.
+            log.warning(
+                "%s is set, so the new refresh token was not persisted. Update "
+                "the secret in your hosting platform if it has changed.",
+                _ENV_REFRESH_TOKEN,
+            )
+            return
         try:
             keyring.set_password(_KEYRING_SERVICE, _KEYRING_USER, token)
         except KeyringError as exc:
-            raise AuthError(f"Could not write to the OS keyring: {exc}") from exc
+            raise AuthError(
+                f"Could not write to the OS keyring: {exc}. On a server, set "
+                f"{_ENV_REFRESH_TOKEN} instead."
+            ) from exc
 
     def clear(self) -> None:
         try:

@@ -1,0 +1,28 @@
+# Render blueprint. Any container host works the same way; this one is written
+# out because the three things that matter are easy to get wrong and hard to
+# diagnose: a persistent disk, a single instance, and secrets set by hand.
+services:
+  - type: web
+    name: djset
+    runtime: docker
+    plan: starter          # a free instance sleeps, and a sleeping instance
+                           # kills a running enrichment pass
+    numInstances: 1        # not a placeholder — see the Dockerfile comment
+    healthCheckPath: /api/health
+    disk:
+      name: djset-data
+      mountPath: /data     # must match DJSET_DB_PATH
+      sizeGB: 1            # ~10 MB per 10,000 tracks, so this is generous
+    envVars:
+      - key: DJSET_DB_PATH
+        value: /data/djset.sqlite3
+      # Set these in the dashboard, not here. sync:false means Render will not
+      # read them from this file and will not print them back.
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: GETSONGBPM_API_KEY
+        sync: false
+      # From `djset token --show` on a machine that has an OS keyring. A
+      # container has none, so this is how a server holds a login at all.
+      - key: SPOTIFY_REFRESH_TOKEN
+        sync: false

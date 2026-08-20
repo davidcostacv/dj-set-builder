@@ -91,10 +91,61 @@ And the web build, in order:
 | W3 | Generate + save, driven from the browser | done |
 | W4 | Sync and enrich as background jobs with live progress | done |
 | W5 | OAuth against a non-loopback redirect | done |
-| W6 | Deploy, with the database and secrets on the server | |
+| W6 | Deploy, with the database and secrets on the server | ready |
 
 W6 is deliberately last: everything before it runs at `localhost`, so the
-interface was finished and used before hosting was introduced.
+interface was finished and used before hosting was introduced. The artifacts
+are here and the runtime paths are tested; the deploy itself needs your hosting
+account, so it is a command you run rather than one this repo can run for you.
+
+### Deploying
+
+```bash
+docker build -t djset .
+```
+
+`render.yaml` is a working blueprint for Render; any container host is the same
+three decisions. Each of them is easy to get wrong and unpleasant to diagnose:
+
+**One instance, one worker.** Not a placeholder. The job runner holds a single
+slot in process memory and the pending OAuth flows live there too, so a second
+worker would run a second enrichment against the same SQLite file and lose
+every callback that landed on the other process. Scaling this means a bigger
+box, not more processes.
+
+**A persistent disk mounted where `DJSET_DB_PATH` points.** Without one the
+database is recreated empty on every deploy, and a ten-hour enrichment pass is
+thrown away with it.
+
+**Three secrets, set in the platform rather than in the repo:**
+
+| | |
+|---|---|
+| `SPOTIFY_CLIENT_ID` | from the Spotify dashboard |
+| `GETSONGBPM_API_KEY` | from getsongbpm.com/api |
+| `SPOTIFY_REFRESH_TOKEN` | from `djset token --show` on a machine with a keyring |
+
+That last one exists because **a container has no OS keyring**. This app has
+always refused to write a refresh token to disk in the clear, so on a server it
+reads one the platform's secret store holds. It is read-only there: a fresh
+authorization on the server updates only the in-memory access token and logs a
+warning, because there is nothing to write back to.
+
+**Set `DJSET_PUBLIC_URL` to the address browsers actually use.** Uvicorn's
+`--proxy-headers` rewrites the scheme from `X-Forwarded-Proto` but *not* the
+host, so behind a load balancer the app derives
+`https://127.0.0.1:8000/auth/callback` — right scheme, wrong host, and Spotify
+refuses it with an error that does not say why. This was found by driving a
+server with forwarded headers, not by reading the docs. `djset serve` warns at
+startup when the URI it derived looks internal.
+
+Then register `https://your-host/auth/callback` in the Spotify dashboard,
+exactly as the startup line prints it.
+
+One constraint that no amount of configuration removes: this app is registered
+in Spotify **development mode**, which caps it at roughly 25 users and requires
+the owner to hold Premium. Fine for personal use; a public launch needs
+Spotify's extension approval.
 
 ### Signing in from the browser
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
 import sqlite3
 from collections.abc import Iterable, Iterator
@@ -12,6 +13,8 @@ from pathlib import Path
 
 from .config import db_path
 from .models import AudioFeatures, Track
+
+log = logging.getLogger(__name__)
 
 SCHEMA = Path(__file__).with_name("schema.sql")
 
@@ -25,7 +28,7 @@ def utcnow() -> str:
 
 # Bump when schema.sql or _ADDED_COLUMNS changes, so an existing database
 # picks the change up. Without a bump the setup below is skipped entirely.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
@@ -69,6 +72,39 @@ def _migrate(conn: sqlite3.Connection) -> None:
         existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    _widen_export_identity(conn)
+
+
+def _widen_export_identity(conn: sqlite3.Connection) -> None:
+    """Move `exports` from UNIQUE(content_hash) to UNIQUE(content_hash, name).
+
+    SQLite cannot drop a constraint, so the table is rebuilt. Existing rows are
+    carried over: they are the record of what this app has put in the account,
+    and losing them would mean re-creating playlists that already exist.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='exports'"
+    ).fetchone()
+    if not row or "content_hash TEXT UNIQUE" not in (row["sql"] or ""):
+        return  # already the new shape, or no table yet
+
+    conn.executescript(
+        """
+        ALTER TABLE exports RENAME TO exports_old;
+        CREATE TABLE exports (
+          id           INTEGER PRIMARY KEY,
+          playlist_id  TEXT,
+          content_hash TEXT,
+          name         TEXT,
+          created_at   TEXT,
+          UNIQUE (content_hash, name)
+        );
+        INSERT INTO exports (id, playlist_id, content_hash, name, created_at)
+          SELECT id, playlist_id, content_hash, name, created_at FROM exports_old;
+        DROP TABLE exports_old;
+        """
+    )
+    log.info("exports identity widened to (content_hash, name)")
 
 
 @contextmanager
@@ -382,10 +418,24 @@ def cached_playlists(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 # --------------------------------------------------------------------------
 
 
-def find_export(conn: sqlite3.Connection, content_hash: str) -> sqlite3.Row | None:
-    """Look up a previous export by its ordered-URI hash — the idempotency guard."""
+def find_export(
+    conn: sqlite3.Connection, content_hash: str, name: str | None = None
+) -> sqlite3.Row | None:
+    """A previous export of this set under this name — the idempotency guard.
+
+    Matching on the name as well as the hash is the difference between "you
+    pressed Save twice" and "you rebuilt this set and called it something
+    else". The first should reuse; the second is a new playlist, and matching
+    on the hash alone silently threw the new name away.
+    """
+    if name is None:
+        return conn.execute(
+            "SELECT * FROM exports WHERE content_hash = ? ORDER BY id DESC",
+            (content_hash,),
+        ).fetchone()
     return conn.execute(
-        "SELECT * FROM exports WHERE content_hash = ?", (content_hash,)
+        "SELECT * FROM exports WHERE content_hash = ? AND name = ?",
+        (content_hash, name),
     ).fetchone()
 
 
@@ -397,8 +447,8 @@ def record_export(
         """
         INSERT INTO exports (playlist_id, content_hash, name, created_at)
         VALUES (?,?,?,?)
-        ON CONFLICT(content_hash) DO UPDATE SET
-          playlist_id=excluded.playlist_id, name=excluded.name
+        ON CONFLICT(content_hash, name) DO UPDATE SET
+          playlist_id=excluded.playlist_id
         """,
         (playlist_id, content_hash, name, utcnow()),
     )

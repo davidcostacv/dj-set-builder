@@ -106,8 +106,11 @@ def export_to_spotify(
 
     digest = content_hash(uris)
 
-    # Idempotency check BEFORE creating anything.
-    existing = db.find_export(conn, digest)
+    # Idempotency check BEFORE creating anything. Keyed on the name as well as
+    # the set: pressing Save twice should reuse, but rebuilding the same set
+    # under a new name is a new playlist, and matching on the hash alone
+    # returned the old one and discarded the name that was typed.
+    existing = db.find_export(conn, digest, name)
     if existing is not None:
         log.info("Identical set already exported as %s — reusing.", existing["playlist_id"])
         return ExportResult(

@@ -370,6 +370,10 @@ def export(body: ExportIn) -> dict[str, Any]:
         "playlist_id": result.playlist_id,
         "url": result.url,
         "message": result.message,
+        "name": result.name,
+        # Whether an existing playlist was returned instead of a new one. The
+        # caller needs this: reusing silently looks like the save was ignored.
+        "reused": result.reused,
     }
 
 

@@ -330,7 +330,12 @@ async function save() {
     $("copy").disabled = $("open").disabled = false;
     $("update").disabled = true;
     $("result-status").textContent = data.message;
-    toast(data.message);
+    toast(
+      data.reused
+        ? `That exact set was already saved as “${data.name}” — opened it ` +
+          "instead of making a duplicate."
+        : data.message
+    );
   } catch (err) {
     toast(err.message, true);
   } finally {

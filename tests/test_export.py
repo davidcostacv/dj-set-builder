@@ -262,3 +262,110 @@ def test_one_failing_bucket_does_not_abort_the_rest(conn):
 
     assert len(results) == 1
     assert results[0].name == "good"
+
+
+# ---------------------------------------------------------------------------
+# a different name is a different playlist
+# ---------------------------------------------------------------------------
+#
+# Reported from real use: a set was saved, the same set was rebuilt and given
+# the name "crazy mixed", and Spotify showed the old playlist under its old
+# name. The guard matched on the ordered-URI hash alone, so it returned the
+# existing playlist and the typed name was discarded without a word.
+
+
+def test_the_same_set_under_a_new_name_is_a_new_playlist(conn):
+    """A double-click sends the same name and must reuse — there is already a
+    test for that. A *different* name is a different intent, and matching on
+    the ordered-URI hash alone returned the old playlist and threw the typed
+    name away."""
+    client = FakeSpotify()
+    tracks = [T("a"), T("b")]
+
+    first = export_to_spotify(conn, client, "BPM+KEY · 20 tracks", tracks)
+    second = export_to_spotify(conn, client, "crazy mixed", tracks)
+
+    assert second.reused is False
+    assert second.playlist_id != first.playlist_id
+    assert [c["name"] for c in client.created] == [
+        "BPM+KEY · 20 tracks",
+        "crazy mixed",
+    ]
+
+
+def test_the_name_that_was_asked_for_is_the_one_reported(conn):
+    """The old guard answered with the *existing* playlist's name, so the app
+    displayed a name nobody had typed."""
+    client = FakeSpotify()
+    tracks = [T("a"), T("b")]
+
+    export_to_spotify(conn, client, "first name", tracks)
+    again = export_to_spotify(conn, client, "second name", tracks)
+    assert again.name == "second name"
+
+
+def test_reuse_of_the_same_name_still_avoids_a_duplicate(conn):
+    """Widening the identity must not weaken the guard it was widened from."""
+    client = FakeSpotify()
+    tracks = [T("a")]
+
+    export_to_spotify(conn, client, "x", tracks)
+    export_to_spotify(conn, client, "x", tracks)
+    export_to_spotify(conn, client, "y", tracks)
+    export_to_spotify(conn, client, "y", tracks)
+
+    assert [c["name"] for c in client.created] == ["x", "y"]
+
+
+def test_an_old_database_is_migrated_without_losing_its_history(tmp_path, monkeypatch):
+    """The exports table is the record of what this app put in the account.
+    Losing it would mean re-creating playlists that already exist."""
+    import sqlite3
+
+    from djset import db
+
+    path = tmp_path / "old.sqlite3"
+    old = sqlite3.connect(path)
+    old.executescript(
+        """
+        CREATE TABLE exports (
+          id           INTEGER PRIMARY KEY,
+          playlist_id  TEXT,
+          content_hash TEXT UNIQUE,
+          name         TEXT,
+          created_at   TEXT
+        );
+        INSERT INTO exports (playlist_id, content_hash, name, created_at)
+          VALUES ('pl_old', 'hash-1', 'an earlier set', '2026-01-01T00:00:00Z');
+        """
+    )
+    old.commit()
+    old.close()
+
+    conn = db.connect(path)
+
+    schema = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name='exports'"
+    ).fetchone()[0]
+    assert "UNIQUE (content_hash, name)" in schema
+    assert "content_hash TEXT UNIQUE" not in schema
+
+    rows = conn.execute("SELECT playlist_id, name FROM exports").fetchall()
+    assert [tuple(r) for r in rows] == [("pl_old", "an earlier set")]
+    assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+    # And the new identity works on the migrated table.
+    db.record_export(conn, "pl_new", "hash-1", "a different name")
+    conn.commit()
+    assert conn.execute("SELECT COUNT(*) FROM exports").fetchone()[0] == 2
+    conn.close()
+
+
+def test_migrating_twice_is_a_no_op(tmp_path):
+    from djset import db
+
+    path = tmp_path / "twice.sqlite3"
+    db.connect(path).close()
+    conn = db.connect(path)          # second open must not rebuild anything
+    assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    conn.close()

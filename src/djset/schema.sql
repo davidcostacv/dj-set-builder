@@ -55,9 +55,15 @@ CREATE TABLE IF NOT EXISTS playlists_cache (
 CREATE TABLE IF NOT EXISTS exports (
   id           INTEGER PRIMARY KEY,
   playlist_id  TEXT,
-  content_hash TEXT UNIQUE,          -- SHA256 of ordered URI list
+  content_hash TEXT,                 -- SHA256 of ordered URI list
   name         TEXT,
-  created_at   TEXT
+  created_at   TEXT,
+  -- Identity is the set *and* the name. The hash alone stops a double-click
+  -- creating two identical playlists, which is what the guard is for -- but it
+  -- also silently returned the old playlist when someone rebuilt the same set
+  -- and gave it a real name, so the name they typed was discarded. A different
+  -- name is a different intent.
+  UNIQUE (content_hash, name)
 );
 
 -- Membership: which tracks belong to which source playlist. Not in the spec's

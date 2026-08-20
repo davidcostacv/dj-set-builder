@@ -47,13 +47,20 @@ right while the packaged `.exe` sees an empty library. `config.db_path()`
 resolves this by picking whichever candidate holds the most tracks. If a
 verification shows an empty library, check there before believing it.
 
-Since 20 Aug 2026 this is settled by a **user-level `DJSET_DB_PATH`** pointing
-at `C:\Users\David\djset\djset.sqlite3`, which is outside `%LOCALAPPDATA%` and
-so outside the redirection entirely. It wins over all of the above and is
-inherited by every process, which is what makes the warning further up matter:
-override it for a verification, forget to take it back off, and real work goes
-somewhere temporary. The superseded copies are parked beside their old
-locations as `djset.sqlite3.superseded-20260820`.
+Since 20 Aug 2026 this is settled by a **user-level `DJSET_DB_PATH`** set
+outside `%LOCALAPPDATA%`, and so outside the redirection entirely. Ask the
+machine where that is rather than assuming — `config.db_path()` prints it, and
+so does `/api/health` on a running server:
+
+```bash
+python -c "from djset import config; print(config.db_path())"
+```
+
+It wins over all of the above and is inherited by every process, which is what
+makes the warning further up matter: override it for a verification, forget to
+take it back off, and real work goes somewhere temporary. Copies left behind by
+earlier consolidations are parked beside their old locations as
+`djset.sqlite3.superseded-*`.
 
 ## Driving the CLI
 

@@ -14,6 +14,7 @@ from djset.export import (
     CHUNK,
     ExportError,
     content_hash,
+    describe_set,
     export_to_spotify,
     playlist_url,
     split_by_genre,
@@ -22,6 +23,7 @@ from djset.export import (
 )
 from djset.models import Track
 from djset.net import HttpError
+from djset.sequencing import SequenceMode
 
 
 def T(tid: str) -> Track:
@@ -369,3 +371,76 @@ def test_migrating_twice_is_a_no_op(tmp_path):
     conn = db.connect(path)          # second open must not rebuild anything
     assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# what the playlist says about itself
+# ---------------------------------------------------------------------------
+#
+# Once a set is in Spotify the description is the only surviving record of how
+# it was built. Three playlists with the same name and the same tracks in three
+# different orders are indistinguishable without it, and "built with djset"
+# said nothing about the one thing that varies between them.
+
+
+def test_each_mode_says_how_it_was_mixed():
+    assert describe_set(SequenceMode.KEY, 20).startswith("Mixed in key")
+    assert describe_set(SequenceMode.BPM, 20).startswith("Mixed by BPM")
+    assert describe_set(SequenceMode.BPM_KEY, 20).startswith("Mixed in key + BPM")
+
+
+def test_the_three_modes_are_distinguishable_from_each_other():
+    """The whole point: you can tell which one produced a given playlist."""
+    said = {describe_set(m, 20, tolerance=0.06).split(" · ")[0] for m in SequenceMode}
+    assert len(said) == 3
+
+
+def test_the_bpm_tolerance_is_named_when_bpm_was_used():
+    assert "±6%" in describe_set(SequenceMode.BPM_KEY, 20, tolerance=0.06)
+    assert "±12%" in describe_set(SequenceMode.BPM, 20, tolerance=0.12)
+
+
+def test_a_key_only_set_does_not_advertise_a_tolerance():
+    """It had no effect on the order, so quoting it would be misleading."""
+    assert "%" not in describe_set(SequenceMode.KEY, 20, tolerance=0.06)
+
+
+def test_only_departures_from_the_defaults_are_called_out():
+    """Naming every setting would bury the unusual one."""
+    plain = describe_set(SequenceMode.BPM_KEY, 20, tolerance=0.06)
+    assert "strict tempo" not in plain and "energy boosts" not in plain
+
+    assert "strict tempo" in describe_set(
+        SequenceMode.BPM_KEY, 20, tolerance=0.06, half_double=False
+    )
+    assert "energy boosts" in describe_set(
+        SequenceMode.BPM_KEY, 20, tolerance=0.06, energy_boost=True
+    )
+
+
+def test_an_energy_boost_is_not_claimed_when_key_was_not_used():
+    """It is a move on the Camelot wheel; without key it did nothing."""
+    assert "energy boosts" not in describe_set(
+        SequenceMode.BPM, 20, tolerance=0.06, energy_boost=True
+    )
+
+
+def test_a_hand_edited_order_admits_it():
+    """After dragging rows about, the order is no longer what the sequencer
+    produced, and saying otherwise is a small lie that costs trust later."""
+    assert "hand-edited" in describe_set(SequenceMode.BPM_KEY, 20, edited=True)
+    assert "hand-edited" not in describe_set(SequenceMode.BPM_KEY, 20)
+
+
+def test_the_track_count_reads_naturally_for_one():
+    assert "1 track ·" in describe_set(SequenceMode.KEY, 1)
+    assert "2 tracks ·" in describe_set(SequenceMode.KEY, 2)
+
+
+def test_it_fits_in_a_spotify_description():
+    """Spotify truncates at 300 characters."""
+    longest = describe_set(
+        SequenceMode.BPM_KEY, 99999, tolerance=0.12,
+        half_double=False, energy_boost=True, edited=True,
+    )
+    assert len(longest) <= 300

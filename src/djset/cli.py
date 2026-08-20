@@ -216,7 +216,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 def cmd_generate(args: argparse.Namespace) -> int:
     """Sequence a set and create the playlist — the whole of Generate."""
-    from .export import ExportError, export_to_spotify
+    from .export import ExportError, describe_set, export_to_spotify
     from .filtering import filter_tracks, summarize
     from .sequencing import SequenceMode, SequenceOptions, build_set
 
@@ -287,7 +287,13 @@ def cmd_generate(args: argparse.Namespace) -> int:
                 _client(),
                 name,
                 result.tracks,
-                description=f"{mode.value} · {len(result.tracks)} tracks · built with djset",
+                description=describe_set(
+                    mode,
+                    len(result.tracks),
+                    tolerance=args.tolerance,
+                    half_double=not args.no_half_double,
+                    energy_boost=args.energy_boost,
+                ),
                 public=args.public,
                 progress=print,
             )

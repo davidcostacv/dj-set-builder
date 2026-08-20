@@ -18,14 +18,19 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .. import db
 from ..config import ConfigError, db_path, load_config
 from ..enrichment import Resolver, default_sources, enrich_tracks
-from ..export import ExportError, export_to_spotify, update_playlist_order
+from ..export import (
+    ExportError,
+    describe_set,
+    export_to_spotify,
+    update_playlist_order,
+)
 from ..filtering import (
     dedupe_recordings,
     filter_tracks,
@@ -159,7 +164,16 @@ class GenerateIn(SelectionIn):
 class ExportIn(BaseModel):
     name: str
     uris: list[str]
-    description: str = "built with djset"
+    # How the set was built, so the description can say. These describe the
+    # *generated* set, not whatever the controls read at save time — the two
+    # differ the moment someone changes a radio button and then saves.
+    mode: SequenceMode = SequenceMode.BPM_KEY
+    tolerance: float = Field(DEFAULT_TOLERANCE, ge=MIN_TOLERANCE, le=MAX_TOLERANCE)
+    half_double: bool = True
+    energy_boost: bool = False
+    edited: bool = False
+    # An explicit description wins; None means compose one from the above.
+    description: str | None = None
     public: bool = False
 
 
@@ -378,9 +392,17 @@ def export(body: ExportIn) -> dict[str, Any]:
         with db.session() as conn:
             tracks_out = [library.by_id[u.rsplit(":", 1)[-1]] for u in body.uris
                           if u.rsplit(":", 1)[-1] in library.by_id]
+            description = body.description or describe_set(
+                body.mode,
+                len(tracks_out),
+                tolerance=body.tolerance,
+                half_double=body.half_double,
+                energy_boost=body.energy_boost,
+                edited=body.edited,
+            )
             result = export_to_spotify(
                 conn, client, body.name, tracks_out,
-                description=body.description, public=body.public,
+                description=description, public=body.public,
             )
     except ConfigError as exc:
         raise HTTPException(500, str(exc))
@@ -606,9 +628,32 @@ def job_enrich(body: EnrichIn) -> dict[str, Any]:
 # the page
 # ---------------------------------------------------------------------------
 
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+class _RevalidatingStatic(StaticFiles):
+    """Static files the browser must re-check before reusing.
+
+    Without this the page keeps running whatever JS the browser cached, and
+    since the assets are unversioned nothing ever tells it otherwise. The
+    symptom is the worst kind: an update that is definitely deployed, verified
+    on the server, and still not happening in the tab you are looking at.
+
+    `no-cache` is not `no-store` — the file is still cached, the browser just
+    has to ask whether it changed. Starlette answers with a 304 from the ETag
+    when it has not, so the cost is one conditional request per asset.
+    """
+
+    def file_response(self, *args, **kwargs) -> Response:
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
+app.mount("/static", _RevalidatingStatic(directory=STATIC), name="static")
 
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(STATIC / "index.html")
+    # Same reasoning as the assets: the page that references them must not be
+    # served from cache either, or it will keep pointing at the old ones.
+    return FileResponse(
+        STATIC / "index.html", headers={"Cache-Control": "no-cache"}
+    )

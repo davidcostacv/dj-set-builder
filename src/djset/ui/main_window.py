@@ -40,7 +40,13 @@ from PySide6.QtWidgets import (
 from .. import db
 from ..config import ConfigError, load_config
 from ..enrichment import ATTRIBUTION_URL, Resolver, default_sources, enrich_tracks
-from ..export import ExportError, export_to_spotify, split_by_genre, update_playlist_order
+from ..export import (
+    ExportError,
+    describe_set,
+    export_to_spotify,
+    split_by_genre,
+    update_playlist_order,
+)
 from ..filtering import (
     UNKNOWN,
     filter_tracks,
@@ -658,7 +664,13 @@ class MainWindow(QMainWindow):
                     self._client(),
                     name,
                     result.tracks,
-                    description=f"{opts.mode.value} · built with djset",
+                    description=describe_set(
+                        opts.mode,
+                        len(result.tracks),
+                        tolerance=opts.tolerance,
+                        half_double=opts.half_double,
+                        energy_boost=opts.energy_boost,
+                    ),
                     public=self.public_toggle.isChecked(),
                     progress=progress,
                 )

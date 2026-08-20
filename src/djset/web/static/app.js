@@ -16,6 +16,10 @@ const state = {
   picked: null,         // hand-picked subset, or null
   maxSet: 0,            // most tracks a set from this selection can hold
   set: [],              // current result rows
+  // The options the current set was actually sequenced with. Kept apart from
+  // the controls: changing a radio button after generating must not change
+  // what the saved playlist claims about itself.
+  builtWith: null,
   playlistId: null,
   dirty: false,
 };
@@ -308,16 +312,20 @@ async function generate() {
   btn.disabled = true;
   btn.textContent = "Sequencing…";
   try {
-    const data = await api("/api/generate", {
-      ...selection(),
+    const built = {
       mode: document.querySelector('input[name=mode]:checked').value,
       tolerance: Number($("tolerance").value),
       half_double: $("half-double").checked,
       energy_boost: $("energy-boost").checked,
+    };
+    const data = await api("/api/generate", {
+      ...selection(),
+      ...built,
       target_kind: $("target-kind").value,
       target_value: Number($("target-value").value),
     });
     state.set = data.tracks;
+    state.builtWith = built;
     state.playlistId = null;
     state.dirty = false;
     renderSet(state.set);
@@ -361,6 +369,10 @@ async function save() {
     const data = await api("/api/export", {
       name: $("playlist-name").value.trim() || $("playlist-name").placeholder,
       uris: state.set.map((t) => t.uri),
+      // What produced this order, plus whether it was touched afterwards. The
+      // server turns these into the description; the page does not phrase it.
+      ...(state.builtWith || {}),
+      edited: state.dirty,
       public: $("public").checked,
     });
     state.playlistId = data.playlist_id;

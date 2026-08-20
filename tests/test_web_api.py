@@ -7,6 +7,8 @@ elsewhere, and that the two rules the desktop build got wrong stay right here.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 pytest.importorskip("fastapi")
@@ -365,3 +367,102 @@ def test_the_breakdown_follows_the_genre_filter(client):
     ).json()["breakdown"]
     assert b["eligible"] == 0
     assert b["sequenceable"] == 0
+
+
+# ---------------------------------------------------------------------------
+# what the saved playlist says about itself
+# ---------------------------------------------------------------------------
+
+
+def _captured_export(client, monkeypatch, **body):
+    """Save a set with Spotify stubbed out, and return what was described."""
+    from djset.web import app as web_app
+
+    seen = {}
+
+    def fake_export(conn, cl, name, tracks, *, description="", public=False, **kw):
+        seen["description"] = description
+        seen["name"] = name
+        return SimpleNamespace(
+            playlist_id="p1", url="http://x/p1", name=name,
+            track_count=len(tracks), reused=False,
+            message=f"Created “{name}”.",
+        )
+
+    # load_config runs before the client is built, so stubbing the client
+    # alone leaves the route dependent on whatever SPOTIFY_CLIENT_ID happens
+    # to be set in the environment — which passes alone and fails in a suite.
+    monkeypatch.setattr(web_app, "load_config", lambda *a, **k: object())
+    monkeypatch.setattr(web_app, "SpotifyClient", lambda auth: object())
+    monkeypatch.setattr(web_app, "SpotifyAuth", lambda cfg: object())
+    monkeypatch.setattr(web_app, "export_to_spotify", fake_export)
+
+    uris = [t["uri"] for t in client.post(
+        "/api/generate", json={"sources": ["pl-a"], "target_value": 3}
+    ).json()["tracks"]]
+    r = client.post("/api/export", json={"name": "n", "uris": uris, **body})
+    assert r.status_code == 200, r.text
+    return seen["description"]
+
+
+def test_the_description_names_the_mode_the_set_was_built_with(client, monkeypatch):
+    said = _captured_export(client, monkeypatch, mode="key")
+    assert said.startswith("Mixed in key")
+    assert "BPM" not in said
+
+
+def test_a_different_mode_produces_a_different_description(client, monkeypatch):
+    a = _captured_export(client, monkeypatch, mode="bpm")
+    b = _captured_export(client, monkeypatch, mode="bpm+key")
+    assert a != b
+    assert a.startswith("Mixed by BPM")
+    assert b.startswith("Mixed in key + BPM")
+
+
+def test_the_default_mode_is_described_rather_than_left_blank(client, monkeypatch):
+    """Nothing sent still has to say something true — bpm+key is the default
+    the sequencer actually used."""
+    said = _captured_export(client, monkeypatch)
+    assert said.startswith("Mixed in key + BPM")
+
+
+def test_an_explicit_description_still_wins(client, monkeypatch):
+    said = _captured_export(client, monkeypatch, description="my own words")
+    assert said == "my own words"
+
+
+def test_a_hand_edited_set_is_described_as_such(client, monkeypatch):
+    assert "hand-edited" in _captured_export(client, monkeypatch, edited=True)
+    assert "hand-edited" not in _captured_export(client, monkeypatch, edited=False)
+
+
+def test_a_nonsense_tolerance_is_refused_before_it_reaches_the_description(client):
+    r = client.post(
+        "/api/export",
+        json={"name": "n", "uris": ["spotify:track:t1"], "tolerance": 9000},
+    )
+    assert r.status_code == 422
+
+
+def test_static_assets_must_be_revalidated_before_reuse(client):
+    """An update that is deployed, verified on the server, and still not
+    happening in the tab you are looking at is the worst class of bug. The
+    assets are unversioned, so without this nothing ever tells the browser
+    its copy is stale."""
+    for path in ("/static/app.js", "/static/app.css", "/"):
+        r = client.get(path)
+        assert r.status_code == 200
+        assert "no-cache" in r.headers.get("cache-control", ""), path
+
+
+def test_an_unchanged_asset_still_answers_304(client):
+    """no-cache is not no-store: the browser keeps the file and only asks
+    whether it changed, so the cost is a conditional request, not a re-download.
+    """
+    first = client.get("/static/app.js")
+    etag = first.headers.get("etag")
+    assert etag
+
+    again = client.get("/static/app.js", headers={"If-None-Match": etag})
+    assert again.status_code == 304
+    assert again.content == b""

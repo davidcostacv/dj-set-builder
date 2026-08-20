@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from . import db
 from .models import Track
 from .net import HttpError
+from .sequencing import SequenceMode
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +75,58 @@ class ExportResult:
                 "Opened the existing playlist instead of creating a duplicate."
             )
         return f"Created “{self.name}” with {self.track_count} tracks."
+
+
+# How the set was mixed, in the words a DJ would use rather than the enum's.
+_MIXED_AS = {
+    SequenceMode.BPM: "Mixed by BPM",
+    SequenceMode.KEY: "Mixed in key",
+    SequenceMode.BPM_KEY: "Mixed in key + BPM",
+}
+
+
+def describe_set(
+    mode: SequenceMode,
+    track_count: int,
+    *,
+    tolerance: float | None = None,
+    half_double: bool = True,
+    energy_boost: bool = False,
+    edited: bool = False,
+) -> str:
+    """The playlist description: what was done to this order, and how.
+
+    Once a set is in Spotify the description is the only record of how it was
+    built. Three playlists with the same name and the same tracks in three
+    different orders are indistinguishable without it, and "built with djset"
+    said nothing about the one thing that varies.
+
+    Deviations from the defaults are named and the defaults are not, so the
+    line stays short and anything unusual about a set is visible at a glance.
+    """
+    parts = [_MIXED_AS.get(mode, "Mixed")]
+
+    detail: list[str] = []
+    if mode.uses_bpm:
+        if tolerance is not None:
+            detail.append(f"±{tolerance * 100:.0f}%")
+        if not half_double:
+            # Off is the surprising choice: it forbids a 70 BPM track after a
+            # 140 one, which is a mix most DJs would expect to be allowed.
+            detail.append("strict tempo")
+    if mode.uses_key and energy_boost:
+        detail.append("energy boosts")
+    if detail:
+        parts[0] += f" ({', '.join(detail)})"
+
+    count = f"{track_count} track{'s' if track_count != 1 else ''}"
+    if edited:
+        # The order is no longer purely what the sequencer produced, and
+        # claiming otherwise is the sort of small lie that costs trust later.
+        count += ", hand-edited"
+    parts.append(count)
+    parts.append("djset")
+    return " · ".join(parts)
 
 
 def playlist_url(playlist_id: str) -> str:

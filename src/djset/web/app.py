@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -33,7 +33,14 @@ from ..filtering import (
     summarize,
 )
 from ..models import Track
-from ..sequencing import SequenceMode, SequenceOptions, build_set
+from ..sequencing import (
+    DEFAULT_TOLERANCE,
+    MAX_TOLERANCE,
+    MIN_TOLERANCE,
+    SequenceMode,
+    SequenceOptions,
+    build_set,
+)
 from ..spotify.auth import SpotifyAuth
 from ..spotify.client import SpotifyClient
 from ..spotify.sync import sync_artists, sync_playlists
@@ -125,12 +132,24 @@ class SelectionIn(BaseModel):
 
 
 class GenerateIn(SelectionIn):
-    mode: str = "bpm+key"
-    tolerance: float = 0.06
+    """Bounds are declared, not clamped.
+
+    These used to be bare floats and ints, and out-of-range values were
+    silently absorbed: `target_value: 0` fell through to the default of 20
+    because zero is falsy, `-5` became 1 via `max(1, n)`, and `tolerance: 9.9`
+    was quietly clamped to 0.12. Nothing broke, but a caller got no signal that
+    what it asked for was not what it got — and the CLI *refuses* exactly these
+    values with a named error, so the two surfaces of one app disagreed about
+    what is valid. Declaring the bounds here makes FastAPI answer 422 and name
+    the field.
+    """
+
+    mode: SequenceMode = SequenceMode.BPM_KEY
+    tolerance: float = Field(DEFAULT_TOLERANCE, ge=MIN_TOLERANCE, le=MAX_TOLERANCE)
     half_double: bool = True
     energy_boost: bool = False
-    target_kind: str = "tracks"  # tracks | minutes | all
-    target_value: int = 20
+    target_kind: Literal["tracks", "minutes", "all"] = "tracks"
+    target_value: int = Field(20, ge=1, le=10_000)
     start_track_id: str | None = None
 
 
@@ -250,20 +269,35 @@ def generate(body: GenerateIn) -> dict[str, Any]:
     behind in the account.
     """
     library.ensure()
+    if not body.sources:
+        raise HTTPException(400, "No sources selected.")
+
+    # Distinguish "you named none" from "none of the ones you named exist".
+    # Both used to say "No sources selected", which is wrong in the second
+    # case and hides a typo'd or stale playlist id behind a message about
+    # something the caller did not do.
+    unknown = [pid for pid in body.sources if pid not in library.members]
     pool = library.pool(body.sources, body.picked)
     if not pool:
-        raise HTTPException(400, "No sources selected.")
+        if unknown:
+            shown = ", ".join(unknown[:3])
+            more = f" (+{len(unknown) - 3} more)" if len(unknown) > 3 else ""
+            raise HTTPException(
+                400,
+                f"None of the selected sources are in the library: {shown}{more}. "
+                "Run Sync if they are new.",
+            )
+        if body.picked:
+            raise HTTPException(
+                400, "The hand-picked subset matched nothing in those sources."
+            )
+        raise HTTPException(400, "Those sources contain no tracks.")
 
     chosen = set(body.genres) if body.genres else None
     eligible = filter_tracks(pool, chosen, library.artist_genres, library.aliases)
 
-    try:
-        mode = SequenceMode(body.mode)
-    except ValueError:
-        raise HTTPException(400, f"Unknown mode {body.mode!r}")
-
     opts = SequenceOptions(
-        mode=mode,
+        mode=body.mode,
         tolerance=body.tolerance,
         half_double=body.half_double,
         energy_boost=body.energy_boost,

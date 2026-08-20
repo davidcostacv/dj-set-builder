@@ -157,10 +157,74 @@ def test_generate_without_sources_is_refused(client):
     assert "No sources" in r.json()["detail"]
 
 
-def test_an_unknown_mode_is_refused_by_name(client):
-    r = client.post("/api/generate", json={"sources": ["pl-a"], "mode": "vibes"})
+def test_unknown_source_ids_are_named_rather_than_blamed_on_the_caller(client):
+    """"No sources selected" was returned when sources *were* supplied but
+    matched nothing, which describes something the caller did not do and hides
+    a typo'd or stale playlist id."""
+    r = client.post("/api/generate", json={"sources": ["ghost-1"]})
     assert r.status_code == 400
-    assert "vibes" in r.json()["detail"]
+    detail = r.json()["detail"]
+    assert "ghost-1" in detail
+    assert "No sources selected" not in detail
+
+
+def test_many_unknown_ids_are_summarised_not_dumped(client):
+    r = client.post("/api/generate", json={"sources": [f"x{i}" for i in range(6)]})
+    detail = r.json()["detail"]
+    assert "x0, x1, x2" in detail
+    assert "+3 more" in detail
+
+
+def test_a_hand_picked_subset_that_matches_nothing_says_so(client):
+    r = client.post(
+        "/api/generate", json={"sources": ["pl-a"], "picked": ["not-a-track"]}
+    )
+    assert r.status_code == 400
+    assert "hand-picked" in r.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# bounds are declared, not silently absorbed
+# ---------------------------------------------------------------------------
+#
+# These used to be bare floats and ints. `target_value: 0` fell through to the
+# default of 20 because zero is falsy, `-5` became 1 via max(1, n), and
+# `tolerance: 9.9` was quietly clamped. Nothing broke, but the caller got no
+# signal — and the CLI refuses exactly these values, so two surfaces of one app
+# disagreed about what is valid.
+
+
+@pytest.mark.parametrize("value", [0, -5])
+def test_a_target_below_one_is_refused_not_turned_into_a_default(client, value):
+    r = client.post("/api/generate", json={"sources": ["pl-a"], "target_value": value})
+    assert r.status_code == 422
+    assert r.json()["detail"][0]["loc"][-1] == "target_value"
+
+
+@pytest.mark.parametrize("value", [9.9, 0.001, -1])
+def test_a_tolerance_outside_the_sequencer_s_range_is_refused(client, value):
+    r = client.post("/api/generate", json={"sources": ["pl-a"], "tolerance": value})
+    assert r.status_code == 422
+    assert r.json()["detail"][0]["loc"][-1] == "tolerance"
+
+
+def test_an_unknown_mode_is_refused_and_the_valid_ones_listed(client):
+    r = client.post("/api/generate", json={"sources": ["pl-a"], "mode": "vibes"})
+    assert r.status_code == 422
+    message = r.json()["detail"][0]["msg"]
+    assert "bpm+key" in message and "key" in message
+
+
+def test_an_unknown_target_kind_is_refused(client):
+    r = client.post("/api/generate", json={"sources": ["pl-a"], "target_kind": "parsecs"})
+    assert r.status_code == 422
+    assert r.json()["detail"][0]["loc"][-1] == "target_kind"
+
+
+@pytest.mark.parametrize("value", [1, 20, 10_000])
+def test_targets_inside_the_range_are_accepted(client, value):
+    r = client.post("/api/generate", json={"sources": ["pl-a"], "target_value": value})
+    assert r.status_code == 200
 
 
 def test_a_short_set_explains_itself_rather_than_failing(client):

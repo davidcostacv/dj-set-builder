@@ -499,6 +499,16 @@ def cmd_crosscheck(args: argparse.Namespace) -> int:
             "this alongside a full `djset enrich` — two processes sharing that "
             "budget risks a block.\n"
         )
+    elif args.against == "dsp":
+        from .enrichment.dsp import DSPSource
+
+        challenger = DSPSource()
+        print(
+            "Note: this measures the audio, so it costs a preview download and a "
+            "few seconds of CPU per track. It is also the only way to find out "
+            "whether the analyser's keys are any good — every other source "
+            "is a catalogue, and this one is the estimate they check.\n"
+        )
     else:
         challenger = DeezerSource()
 
@@ -594,9 +604,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument(
         "--against",
         default="deezer",
-        choices=["deezer", "acousticbrainz", "getsongbpm"],
+        choices=["deezer", "acousticbrainz", "getsongbpm", "dsp"],
         help="the second opinion. deezer is the cheap one — it needs no API "
-        "key and does not touch MusicBrainz's 1 req/s budget (default: deezer)",
+        "key and does not touch MusicBrainz's 1 req/s budget. dsp measures the "
+        "audio instead of looking it up, which is the only way to find out "
+        "whether the analyser's keys are trustworthy (default: deezer)",
     )
     sp.add_argument("--sample", type=_sample_size, default=150)
     sp.add_argument(

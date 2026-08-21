@@ -131,6 +131,12 @@ tbody tr { cursor: grab; }
    Deliberately quiet: it qualifies the value, it is not a warning. */
 .est { color: var(--warn); margin-left: .15rem; cursor: help; font-weight: 600; }
 
+/* Carried at the end because there is no BPM or key to mix on. Dimmed and
+   labelled: present in the playlist, visibly not part of the mix. */
+tbody tr.carried { opacity: .62; }
+tbody tr.carried td.num:first-child { color: var(--muted); }
+.carried-tag { color: var(--muted); font-size: .78rem; font-style: italic; }
+
 .t-excellent { color: var(--good); }
 .t-good { color: var(--good); opacity: .8; }
 .t-fair { color: var(--warn); }

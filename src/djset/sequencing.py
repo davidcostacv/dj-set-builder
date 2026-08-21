@@ -199,10 +199,19 @@ class SetResult:
     # Transitions that had to break the active predicates, which only happens
     # in "reorder everything" mode where placing every track is the point.
     compromises: int = 0
+    # Tracks carried at the end because they have no BPM or key to sequence on.
+    # They are part of `tracks` — the count is here so everything downstream
+    # can say so rather than presenting them as though they were mixed in.
+    appended: int = 0
+
+    @property
+    def sequenced(self) -> list[Track]:
+        """The part that was actually put in order."""
+        return self.tracks[: len(self.tracks) - self.appended] if self.appended else self.tracks
 
     @property
     def reached_target(self) -> bool:
-        return len(self.tracks) >= self.requested
+        return len(self.sequenced) >= self.requested
 
     @property
     def average_quality(self) -> float:
@@ -225,6 +234,11 @@ class SetResult:
                 base += (
                     f" {self.compromises} transition(s) had to break the "
                     "BPM/key rules to place every track."
+                )
+            if self.appended:
+                base += (
+                    f" {self.appended} track(s) have no BPM or key, so they are "
+                    "carried at the end rather than dropped."
                 )
             return base
         return (
@@ -443,7 +457,7 @@ def build_set(
     # appears as an album track, a single and a compilation cut, each with its
     # own Spotify id — so per-id uniqueness is not enough to stop a set playing
     # the same song twice.
-    tracks = dedupe_recordings(tracks)
+    tracks = dedupe_recordings(tracks, features)
     features = comparable_energy(features)
     graph = TrackGraph(tracks, features, opts)
     target = _target_length(graph, opts)
@@ -529,6 +543,21 @@ def build_set(
         transition(graph.feat[a], graph.feat[b], opts) or Transition(None, None, None, 0.0)
         for a, b in zip(path, path[1:])
     ]
+
+    if opts.use_all:
+        # Asking for the whole selection means the whole selection. A track
+        # with no BPM or key cannot be *mixed* into an order, but dropping it
+        # loses it from the playlist entirely — which reads as the app quietly
+        # eating songs. Carry them at the end instead, where they are visibly
+        # unsequenced rather than invisibly gone.
+        #
+        # Only here: an explicit "20 tracks" is a request to choose 20, and
+        # nothing is being dropped when the rest were never asked for.
+        placed = {t.spotify_id for t in result.tracks}
+        leftovers = [t for t in tracks if t.spotify_id not in placed]
+        result.tracks.extend(leftovers)
+        result.appended = len(leftovers)
+
     if not result.reached_target:
         result.limiting_factor = _diagnose(
             graph, opts, eligible_before_filter, len(tracks)

@@ -172,6 +172,8 @@ class ExportIn(BaseModel):
     half_double: bool = True
     energy_boost: bool = False
     edited: bool = False
+    # How many of the tracks were carried at the end rather than sequenced.
+    carried: int = 0
     # Playlist ids the set was drawn from. Ids rather than names: the names
     # are resolved here from the library, so the description cannot be made
     # to claim a source the page merely believes in.
@@ -365,6 +367,7 @@ def generate(body: GenerateIn) -> dict[str, Any]:
     result = build_set(eligible, library.features, opts, eligible_before_filter=len(pool))
 
     rows = []
+    first_carried = len(result.tracks) - result.appended
     for i, t in enumerate(result.tracks):
         row = _track_json(t, library.features)
         tr = result.transitions[i] if i < len(result.transitions) else None
@@ -372,6 +375,11 @@ def generate(body: GenerateIn) -> dict[str, Any]:
             "incompatible" if tr else None
         )
         row["quality"] = tr.quality if tr else None
+        # Carried, not mixed: no BPM or key to sequence on, kept so the
+        # playlist is not quietly shorter than the selection it came from.
+        row["carried"] = i >= first_carried
+        if row["carried"]:
+            row["transition"] = None
         rows.append(row)
 
     total_ms = sum(t.duration_ms or 0 for t in result.tracks)
@@ -383,6 +391,7 @@ def generate(body: GenerateIn) -> dict[str, Any]:
         "pool_size": result.pool_size,
         "reached_target": result.reached_target,
         "compromises": result.compromises,
+        "appended": result.appended,
         "duration_ms": total_ms,
         "average_quality": (sum(qualities) / len(qualities)) if qualities else 0.0,
         "explain": result.explain(),
@@ -409,6 +418,7 @@ def export(body: ExportIn) -> dict[str, Any]:
                 half_double=body.half_double,
                 energy_boost=body.energy_boost,
                 edited=body.edited,
+                carried=body.carried,
                 sources=[by_id[s] for s in body.sources if by_id.get(s)],
             )
             result = export_to_spotify(

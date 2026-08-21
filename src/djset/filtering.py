@@ -307,25 +307,46 @@ def song_family(track: Track) -> str:
     return f"{normalize_artist(track.primary_artist)}|{bare}"
 
 
-def dedupe_recordings(tracks: list[Track]) -> list[Track]:
+def dedupe_recordings(
+    tracks: list[Track], features: dict[str, AudioFeatures] | None = None
+) -> list[Track]:
     """Full duplicate removal: ISRC first, then artist+title.
 
     ISRC is authoritative but not sufficient — a re-release or remaster of the
     same song carries a different ISRC, which is how "This Love" by Maroon 5
     ended up in a generated set twice.
+
+    When ``features`` is given, a group keeps the copy that can actually be
+    sequenced. Taking whichever came first meant a playlist holding the same
+    recording twice — once with a BPM and key, once with nothing — could keep
+    the empty one and drop the usable one, and the survivor was then filtered
+    out for having no data. One track short, for no reason a reader of the
+    playlist could ever see.
+
+    Order is unchanged: a group appears where its *first* member appeared,
+    whichever member is chosen to represent it.
     """
-    out: list[Track] = []
-    seen_isrc: set[str] = set()
-    seen_key: set[str] = set()
+    usable = (
+        (lambda t: (f := features.get(t.spotify_id)) is not None and f.is_usable)
+        if features is not None
+        else (lambda t: False)
+    )
+
+    order: list[str] = []
+    groups: dict[str, Track] = {}
+    isrc_group: dict[str, str] = {}
 
     for t in tracks:
-        if t.isrc and t.isrc in seen_isrc:
-            continue
         key = recording_key(t)
-        if key in seen_key:
-            continue
+        # An ISRC seen before pins this track to that group even when its
+        # title differs, which is the case ISRC exists to catch.
+        if t.isrc and t.isrc in isrc_group:
+            key = isrc_group[t.isrc]
+        if key not in groups:
+            order.append(key)
+            groups[key] = t
+        elif usable(t) and not usable(groups[key]):
+            groups[key] = t
         if t.isrc:
-            seen_isrc.add(t.isrc)
-        seen_key.add(key)
-        out.append(t)
-    return out
+            isrc_group.setdefault(t.isrc, key)
+    return [groups[k] for k in order]

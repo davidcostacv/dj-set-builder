@@ -143,11 +143,49 @@ def test_use_all_overrides_a_track_count():
     assert len(res.tracks) == 9
 
 
-def test_use_all_skips_tracks_it_cannot_sequence():
+def test_use_all_carries_tracks_it_cannot_sequence_at_the_end():
+    """"The whole selection" means the whole selection. A track with no BPM or
+    key cannot be *mixed* into an order, but dropping it loses it from the
+    playlist entirely, which reads as the app quietly eating songs."""
     tracks, feats = _chain(5)
     feats["t2"] = AudioFeatures("t2", None, None, source="test")  # unusable
     res = build_set(tracks, feats, SequenceOptions(use_all=True))
-    assert len(res.tracks) == 4
+
+    assert len(res.tracks) == 5
+    assert res.tracks[-1].spotify_id == "t2"      # carried, at the end
+    assert res.appended == 1
+    assert [t.spotify_id for t in res.sequenced] == ["t0", "t1", "t3", "t4"]
+
+
+def test_the_carried_tracks_are_not_counted_as_mixed():
+    """They have no transitions, so quality must be measured over the part
+    that was actually sequenced — otherwise appending drags the number down
+    and makes a good set look worse than it is."""
+    tracks, feats = _chain(5)
+    feats["t2"] = AudioFeatures("t2", None, None, source="test")
+    res = build_set(tracks, feats, SequenceOptions(use_all=True))
+
+    assert len(res.transitions) == len(res.sequenced) - 1
+    assert res.average_quality > 0
+
+
+def test_the_explanation_says_they_were_carried_not_mixed():
+    tracks, feats = _chain(4)
+    feats["t1"] = AudioFeatures("t1", None, None, source="test")
+    res = build_set(tracks, feats, SequenceOptions(use_all=True))
+    assert "no BPM or key" in res.explain()
+    assert "carried at the end" in res.explain()
+
+
+def test_an_explicit_count_is_not_padded_with_unmixable_tracks():
+    """Asking for 3 tracks is a request to *choose* 3. Nothing is being
+    dropped when the rest were never asked for, so nothing is carried."""
+    tracks, feats = _chain(6)
+    feats["t2"] = AudioFeatures("t2", None, None, source="test")
+    res = build_set(tracks, feats, SequenceOptions(target_tracks=3))
+
+    assert len(res.tracks) == 3
+    assert res.appended == 0
     assert "t2" not in {t.spotify_id for t in res.tracks}
 
 

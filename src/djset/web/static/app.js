@@ -268,13 +268,15 @@ function renderSet(rows) {
     tr.draggable = true;
     tr.dataset.index = i;
     const label = t.transition || "—";
+    if (t.carried) tr.classList.add("carried");
     tr.innerHTML =
       `<td class="num">${i + 1}</td>` +
       `<td>${escapeHtml(t.title)}</td>` +
       `<td>${escapeHtml(t.artist)}</td>` +
       `<td class="num">${t.bpm ? t.bpm.toFixed(0) : "—"}</td>` +
       `<td class="num">${keyCell(t)}</td>` +
-      `<td class="t-${label.replace(/\s/g, "-")}">${label}</td>` +
+      `<td class="t-${label.replace(/\s/g, "-")}">` +
+      `${t.carried ? '<span class="carried-tag">not mixed</span>' : label}</td>` +
       `<td><button class="drop" title="Remove">✕</button></td>`;
     tr.querySelector(".drop").addEventListener("click", () => {
       state.set.splice(i, 1);
@@ -351,10 +353,15 @@ async function generate() {
     // total says whether this is a set resting on two estimates or on two
     // hundred.
     const estimated = state.set.filter((t) => t.key_estimated).length;
+    const carried = data.appended || 0;
     $("result-summary").textContent =
       `${data.count} tracks · ${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m` +
-      ` · average transition quality ${Math.round(data.average_quality * 100)}%` +
+      // Quality is over the sequenced part only; saying so stops the number
+      // reading as a verdict on tracks that were never mixed.
+      ` · ${Math.round(data.average_quality * 100)}% quality over the ` +
+      `${data.count - carried} mixed` +
       (data.compromises ? ` · ${data.compromises} forced` : "") +
+      (carried ? ` · ${carried} carried at the end (no BPM/key)` : "") +
       (estimated ? ` · ${estimated} key${estimated === 1 ? "" : "s"} measured, not verified` : "");
     $("result-status").textContent = data.reached_target
       ? "Set ready. Nothing has been written to Spotify yet."
@@ -394,6 +401,7 @@ async function save() {
       // server turns these into the description; the page does not phrase it.
       ...(state.builtWith || {}),
       edited: state.dirty,
+      carried: state.set.filter((t) => t.carried).length,
       public: $("public").checked,
     });
     state.playlistId = data.playlist_id;

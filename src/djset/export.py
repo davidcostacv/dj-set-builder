@@ -97,6 +97,7 @@ def describe_set(
     half_double: bool = True,
     energy_boost: bool = False,
     edited: bool = False,
+    carried: int = 0,
     sources: Sequence[str] = (),
 ) -> str:
     """The playlist description: what was done to this order, and how.
@@ -129,6 +130,11 @@ def describe_set(
         # The order is no longer purely what the sequencer produced, and
         # claiming otherwise is the sort of small lie that costs trust later.
         count += ", hand-edited"
+    if carried:
+        # These are in the playlist but were never mixed into it. Saying so
+        # keeps the headline claim — "Mixed in key + BPM" — true of the part
+        # it actually describes.
+        count += f" ({carried} unmixed, at the end)"
     parts.append(count)
 
     # Where the tracks came from. A set is a rearrangement of something, and

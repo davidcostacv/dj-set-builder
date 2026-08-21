@@ -554,3 +554,38 @@ def test_a_non_loopback_host_is_left_to_uvicorn():
     assert _is_loopback("127.0.0.1") and _is_loopback("localhost") and _is_loopback("::1")
     assert not _is_loopback("0.0.0.0")
     assert not _is_loopback("djset.example.com")
+
+
+def test_carried_tracks_are_flagged_and_last(client):
+    """"The whole selection" must not quietly return fewer tracks than the
+    selection holds."""
+    from djset import db
+    from djset.models import AudioFeatures
+    from djset.web import app as web_app
+
+    ids = list(web_app.library.by_id)
+    with db.session() as conn:
+        for i, tid in enumerate(ids):
+            if i == 0:
+                conn.execute("DELETE FROM audio_features WHERE spotify_id=?", (tid,))
+            else:
+                db.upsert_features(conn, AudioFeatures(
+                    spotify_id=tid, bpm=128.0, key_camelot="8A", source="getsongbpm"))
+    web_app.library.load()
+
+    body = client.post("/api/generate", json={
+        "sources": ["pl-a"], "target_kind": "all", "target_value": 100}).json()
+
+    rows = body["tracks"]
+    assert body["appended"] >= 1
+    carried = [r for r in rows if r["carried"]]
+    assert len(carried) == body["appended"]
+    assert all(r["carried"] for r in rows[-body["appended"]:])   # they are the tail
+    assert all(r["transition"] is None for r in carried)
+
+
+def test_an_explicit_count_carries_nothing(client):
+    body = client.post("/api/generate", json={
+        "sources": ["pl-a"], "target_kind": "tracks", "target_value": 2}).json()
+    assert body["appended"] == 0
+    assert all(not r["carried"] for r in body["tracks"])

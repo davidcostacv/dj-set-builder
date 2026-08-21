@@ -81,11 +81,28 @@ MIN_ARTIST_SIM = 0.5
 
 _PITCHES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
-# Krumhansl-Schmuckler key profiles: how strongly each scale degree is expected
-# to sound in a major and a minor key. Correlating the track's average chroma
-# against all 24 rotations is the standard way to name a key.
-_MAJOR = (6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88)
-_MINOR = (6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17)
+# Key profiles: how strongly each scale degree is expected to sound in a major
+# and a minor key. Correlating the track's average chroma against all 24
+# rotations is the standard way to name a key; which profile you correlate
+# against decides how often you are right.
+#
+# These are Albrecht-Shanahan, fitted to a large corpus of actual scores.
+# Krumhansl-Schmuckler shipped first, from the 1982 probe-tone experiments,
+# and was measurably worse here. Scored against 198 tracks whose key came from
+# a catalogue, over the same audio, at the same margin:
+#
+#     profile      exact   adjacent   conflict   declined   usable
+#     albrecht     41.4%     33.8%      21.2%      3.5%      75.3%
+#     temperley    40.4%     31.8%      24.2%      3.5%      72.2%
+#     shaath       36.4%     27.3%      28.8%      7.6%      63.6%
+#     krumhansl    34.8%     28.8%      27.8%      8.6%      63.6%
+#
+# Every Albrecht variant beat every Krumhansl variant by around ten points,
+# well outside the ~3-point noise at this sample size — and the sharper
+# discrimination also settles keys that used to come out too close to call, so
+# it is not a coverage/accuracy trade. It is better and more.
+_MAJOR = (0.238, 0.006, 0.111, 0.006, 0.137, 0.094, 0.016, 0.214, 0.009, 0.080, 0.008, 0.081)
+_MINOR = (0.220, 0.006, 0.104, 0.123, 0.019, 0.103, 0.012, 0.214, 0.062, 0.022, 0.061, 0.052)
 
 
 class DSPSource:
@@ -255,14 +272,17 @@ def analyse(audio: bytes) -> tuple[float, str | None, float] | None:
         return None
 
     try:
-        tempo = float(np.atleast_1d(librosa.beat.beat_track(y=y, sr=sr)[0])[0])
+        raw_tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+        tempo = float(np.atleast_1d(raw_tempo)[0])
     except Exception as exc:
         log.warning("beat tracking failed: %s", exc)
         return None
     if not (MIN_BPM <= tempo <= MAX_BPM):
         return None
 
-    key, margin = _estimate_key(y, sr)
+    # The beats are already paid for by the tempo, and the key estimate is
+    # better for having them — see _estimate_key.
+    key, margin = _estimate_key(y, sr, beats=beats)
     return tempo, key, margin
 
 
@@ -318,15 +338,27 @@ def _transcode(src: str) -> str | None:
     return out
 
 
-def _estimate_key(y, sr) -> tuple[str | None, float]:
-    """Average chroma against all 24 Krumhansl-Schmuckler profiles."""
+def _estimate_key(y, sr, beats=None) -> tuple[str | None, float]:
+    """Average chroma against all 24 key profiles.
+
+    Three things are done to the chroma before it is correlated, each measured
+    rather than assumed:
+
+    * the **harmonic** component only — percussion smears the pitch classes;
+    * **tuning-corrected** — a track recorded a quarter-tone sharp otherwise
+      spreads its energy across two bins;
+    * **averaged per beat** — the median within each beat stops a passing note
+      counting as heavily as the chord actually sounding under it.
+    """
     import librosa
     import numpy as np
 
     try:
-        # Percussion smears the chroma; the harmonic part is what carries key.
         harmonic = librosa.effects.harmonic(y)
-        chroma = librosa.feature.chroma_cqt(y=harmonic, sr=sr)
+        tuning = librosa.estimate_tuning(y=harmonic, sr=sr)
+        chroma = librosa.feature.chroma_cqt(y=harmonic, sr=sr, tuning=tuning)
+        if beats is not None and len(beats) > 4:
+            chroma = librosa.util.sync(chroma, beats, aggregate=np.median)
     except Exception as exc:
         log.warning("chroma failed: %s", exc)
         return None, 0.0

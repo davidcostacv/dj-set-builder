@@ -366,6 +366,13 @@ class MainWindow(QMainWindow):
     def selected_sources(self) -> list[str]:
         return [pid for cb, pid in getattr(self, "source_boxes", []) if cb.isChecked()]
 
+    def _source_names(self, conn) -> list[str]:
+        """Names for the ticked sources, resolved from the library rather than
+        scraped off the checkbox labels, which carry a track count too."""
+        chosen = self.selected_sources()
+        by_id = {p["spotify_id"]: p["name"] for p in db.cached_playlists(conn)}
+        return [by_id[pid] for pid in chosen if by_id.get(pid)]
+
     def selected_genres(self) -> set[str] | None:
         """None means NO FILTER — deliberately distinct from 'none selected'."""
         chosen = {
@@ -667,6 +674,7 @@ class MainWindow(QMainWindow):
                     description=describe_set(
                         opts.mode,
                         len(result.tracks),
+                        sources=self._source_names(conn),
                         tolerance=opts.tolerance,
                         half_double=opts.half_double,
                         energy_boost=opts.energy_boost,

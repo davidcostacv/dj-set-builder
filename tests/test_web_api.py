@@ -504,3 +504,15 @@ def test_a_catalogue_key_is_not_flagged(client):
     for r in rows:
         if r["key"] and r["key_source"] != "dsp":
             assert r["key_estimated"] is False
+
+
+def test_the_description_names_the_source_playlist(client, monkeypatch):
+    said = _captured_export(client, monkeypatch, sources=["pl-a"])
+    assert "from " in said
+
+
+def test_a_source_the_page_invents_is_not_named(client, monkeypatch):
+    """Ids in, names resolved from the library — so the description cannot be
+    made to claim a source that does not exist."""
+    said = _captured_export(client, monkeypatch, sources=["pl-a", "not-a-playlist"])
+    assert "not-a-playlist" not in said

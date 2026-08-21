@@ -444,3 +444,48 @@ def test_it_fits_in_a_spotify_description():
         half_double=False, energy_boost=True, edited=True,
     )
     assert len(longest) <= 300
+
+
+def test_the_source_playlist_is_named():
+    """Six months later, "which playlist was this?" is the question the
+    playlist's own name rarely answers."""
+    said = describe_set(SequenceMode.BPM_KEY, 20, sources=["reggaeton viejito"])
+    assert "from reggaeton viejito" in said
+
+
+def test_two_sources_are_both_named():
+    said = describe_set(SequenceMode.KEY, 20, sources=["one", "two"])
+    assert "from one, two" in said
+
+
+def test_many_sources_are_summarised_rather_than_listed():
+    said = describe_set(SequenceMode.KEY, 20, sources=["a", "b", "c", "d", "e"])
+    assert "from a, b +3 more" in said
+
+
+def test_no_source_means_no_clause():
+    """The CLI over the whole library has nothing worth naming: "from
+    everything" tells a reader nothing they did not already assume."""
+    assert "from" not in describe_set(SequenceMode.KEY, 20)
+    assert "from" not in describe_set(SequenceMode.KEY, 20, sources=[])
+
+
+def test_blank_names_are_not_printed_as_empty_entries():
+    assert describe_set(SequenceMode.KEY, 20, sources=["", "  ", "real"]).count(
+        "from real"
+    ) == 1
+
+
+def test_long_playlist_names_do_not_push_it_past_the_limit():
+    """Spotify truncates at 300 and would cut mid-word. Dropping a source name
+    is recoverable; losing the end of the sentence is not."""
+    said = describe_set(
+        SequenceMode.BPM_KEY, 20, tolerance=0.06, sources=["x" * 150, "y" * 150]
+    )
+    assert len(said) <= 300
+    assert said.endswith("djset")
+
+
+def test_an_unsurvivable_single_name_is_still_truncated_cleanly():
+    said = describe_set(SequenceMode.BPM_KEY, 20, sources=["z" * 400])
+    assert len(said) <= 300

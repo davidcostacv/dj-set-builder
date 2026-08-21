@@ -172,6 +172,10 @@ class ExportIn(BaseModel):
     half_double: bool = True
     energy_boost: bool = False
     edited: bool = False
+    # Playlist ids the set was drawn from. Ids rather than names: the names
+    # are resolved here from the library, so the description cannot be made
+    # to claim a source the page merely believes in.
+    sources: list[str] = Field(default_factory=list)
     # An explicit description wins; None means compose one from the above.
     description: str | None = None
     public: bool = False
@@ -397,6 +401,7 @@ def export(body: ExportIn) -> dict[str, Any]:
         with db.session() as conn:
             tracks_out = [library.by_id[u.rsplit(":", 1)[-1]] for u in body.uris
                           if u.rsplit(":", 1)[-1] in library.by_id]
+            by_id = {p["spotify_id"]: p["name"] for p in library.playlists}
             description = body.description or describe_set(
                 body.mode,
                 len(tracks_out),
@@ -404,6 +409,7 @@ def export(body: ExportIn) -> dict[str, Any]:
                 half_double=body.half_double,
                 energy_boost=body.energy_boost,
                 edited=body.edited,
+                sources=[by_id[s] for s in body.sources if by_id.get(s)],
             )
             result = export_to_spotify(
                 conn, client, body.name, tracks_out,

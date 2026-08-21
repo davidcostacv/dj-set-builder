@@ -293,6 +293,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
                     tolerance=args.tolerance,
                     half_double=not args.no_half_double,
                     energy_boost=args.energy_boost,
+                    sources=_source_names(conn, args.playlist),
                 ),
                 public=args.public,
                 progress=print,
@@ -476,6 +477,18 @@ def _sample_size(raw: str) -> int:
             f"{value} is not a usable sample size — ask for at least 1 track"
         )
     return value
+
+
+def _source_names(conn, playlist_ids: list[str] | None) -> list[str]:
+    """Names for the ids given to --playlist, in the order they were given.
+
+    No ids means the whole library, which is not a source worth naming: "from
+    everything" tells a reader nothing they did not already assume.
+    """
+    if not playlist_ids:
+        return []
+    by_id = {p["spotify_id"]: p["name"] for p in db.cached_playlists(conn)}
+    return [by_id[pid] for pid in playlist_ids if by_id.get(pid)]
 
 
 def _tolerance(raw: str) -> float:

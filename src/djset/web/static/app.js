@@ -330,6 +330,9 @@ async function generate() {
       tolerance: Number($("tolerance").value),
       half_double: $("half-double").checked,
       energy_boost: $("energy-boost").checked,
+      // Held with the rest: ticking a different playlist after generating
+      // must not change what the saved set says it was drawn from.
+      sources: [...state.selected],
     };
     const data = await api("/api/generate", {
       ...selection(),

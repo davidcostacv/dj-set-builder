@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from . import db
@@ -85,6 +85,10 @@ _MIXED_AS = {
 }
 
 
+# Spotify truncates a playlist description here.
+MAX_DESCRIPTION = 300
+
+
 def describe_set(
     mode: SequenceMode,
     track_count: int,
@@ -93,6 +97,7 @@ def describe_set(
     half_double: bool = True,
     energy_boost: bool = False,
     edited: bool = False,
+    sources: Sequence[str] = (),
 ) -> str:
     """The playlist description: what was done to this order, and how.
 
@@ -125,8 +130,34 @@ def describe_set(
         # claiming otherwise is the sort of small lie that costs trust later.
         count += ", hand-edited"
     parts.append(count)
+
+    # Where the tracks came from. A set is a rearrangement of something, and
+    # six months later "which playlist was this?" is the question the name
+    # rarely answers on its own.
+    named = [n.strip() for n in sources if n and n.strip()]
+    if named:
+        parts.append(_from_clause(named))
     parts.append("djset")
-    return " · ".join(parts)
+
+    line = " · ".join(parts)
+    if len(line) <= MAX_DESCRIPTION:
+        return line
+    # Playlist names have no length limit worth relying on. Drop sources until
+    # it fits rather than let Spotify cut the line mid-word — losing a name is
+    # recoverable, losing the end of the sentence is not.
+    for keep in range(len(named) - 1, 0, -1):
+        parts[-2] = _from_clause(named, keep=keep)
+        line = " · ".join(parts)
+        if len(line) <= MAX_DESCRIPTION:
+            return line
+    return line[: MAX_DESCRIPTION - 1] + "…"
+
+
+def _from_clause(names: Sequence[str], keep: int = 2) -> str:
+    """``from A``, ``from A, B``, ``from A, B +3 more``."""
+    shown = list(names[:keep])
+    rest = len(names) - len(shown)
+    return "from " + ", ".join(shown) + (f" +{rest} more" if rest else "")
 
 
 def playlist_url(playlist_id: str) -> str:

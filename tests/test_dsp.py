@@ -386,3 +386,52 @@ def test_an_mp3_is_handed_to_librosa_under_a_name_it_can_open(monkeypatch):
     dsp.analyse(b"ID3\x04\x00\x00\x00\x00\x00\x00\xff\xfb" + b"\x00" * 40_000)
 
     assert seen["path"].endswith(".mp3")
+
+
+# ---------------------------------------------------------------------------
+# matching against every credit, not just the first
+# ---------------------------------------------------------------------------
+
+
+def test_a_later_credit_can_carry_the_match():
+    """Catalogues join credits differently. Spotify's "Yere, Bicycle Ride" is
+    iTunes' "Yere & Bicycle Ride", and the first name alone scores below the
+    gate — but the track really does credit both."""
+    from djset.enrichment.dsp import artist_matches
+
+    t = Track("t1", "spotify:track:t1", "Lazy Haze", "Yere, Bicycle Ride",
+              artist_names=["Yere", "Bicycle Ride"])
+    assert artist_matches(t, "Yere & Bicycle Ride")
+
+
+def test_an_unrelated_artist_is_still_refused():
+    """The bar each name has to clear is unchanged; there are just more names."""
+    from djset.enrichment.dsp import artist_matches
+
+    t = Track("t1", "spotify:track:t1", "Still Want Me", "James Hype",
+              artist_names=["James Hype"])
+    assert not artist_matches(t, "Jason Derulo")
+
+
+def test_a_featured_artist_counts(monkeypatch):
+    from djset.enrichment.dsp import artist_matches
+
+    t = Track("t1", "spotify:track:t1", "x", "DJ Khaled, Lil Baby",
+              artist_names=["DJ Khaled", "Lil Baby"])
+    assert artist_matches(t, "Lil Baby")
+
+
+def test_a_track_with_no_artist_list_falls_back_to_the_display_name():
+    """Rows written before artist_names existed still have to match."""
+    from djset.enrichment.dsp import artist_matches
+
+    t = Track("t1", "spotify:track:t1", "x", "Daft Punk", artist_names=[])
+    assert artist_matches(t, "Daft Punk")
+    assert not artist_matches(t, "Justice")
+
+
+def test_an_empty_candidate_never_matches():
+    from djset.enrichment.dsp import artist_matches
+
+    t = Track("t1", "spotify:track:t1", "x", "Daft Punk", artist_names=["Daft Punk"])
+    assert not artist_matches(t, "")

@@ -105,6 +105,25 @@ _MAJOR = (0.238, 0.006, 0.111, 0.006, 0.137, 0.094, 0.016, 0.214, 0.009, 0.080, 
 _MINOR = (0.220, 0.006, 0.104, 0.123, 0.019, 0.103, 0.012, 0.214, 0.062, 0.022, 0.061, 0.052)
 
 
+def artist_matches(track: Track, candidate: str) -> bool:
+    """Whether ``candidate`` credits anyone this track credits.
+
+    Comparing only ``primary_artist`` threw away the rest of the list we
+    already hold, and catalogues join credits differently: Spotify's
+    "Yere, Bicycle Ride" is iTunes' "Yere & Bicycle Ride", whose first name
+    alone scores far below the gate. Taking the best match across the credits
+    fixes that without loosening anything — the bar each name has to clear is
+    unchanged, and the title still has to match too.
+    """
+    other = normalize_artist(candidate)
+    if not other:
+        return False
+    names = track.artist_names or [track.artist]
+    return any(
+        similarity(normalize_artist(n), other) >= MIN_ARTIST_SIM for n in names if n
+    )
+
+
 class DSPSource:
     name = MEASURED_SOURCE
     priority = 40
@@ -176,8 +195,7 @@ class DSPSource:
             if (
                 similarity(title, normalize_title(row.get("trackName") or ""))
                 >= MIN_TITLE_SIM
-                and similarity(artist, normalize_artist(row.get("artistName") or ""))
-                >= MIN_ARTIST_SIM
+                and artist_matches(track, row.get("artistName") or "")
             ):
                 return str(row["previewUrl"])
         return None
@@ -195,10 +213,8 @@ class DSPSource:
             if not isinstance(row, dict) or not row.get("preview"):
                 continue
             r_title = normalize_title(row.get("title") or "")
-            r_artist = normalize_artist((row.get("artist") or {}).get("name") or "")
-            if (
-                similarity(title, r_title) >= MIN_TITLE_SIM
-                and similarity(artist, r_artist) >= MIN_ARTIST_SIM
+            if similarity(title, r_title) >= MIN_TITLE_SIM and artist_matches(
+                track, (row.get("artist") or {}).get("name") or ""
             ):
                 return str(row["preview"])
         return None

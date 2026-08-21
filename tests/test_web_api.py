@@ -516,3 +516,41 @@ def test_a_source_the_page_invents_is_not_named(client, monkeypatch):
     made to claim a source that does not exist."""
     said = _captured_export(client, monkeypatch, sources=["pl-a", "not-a-playlist"])
     assert "not-a-playlist" not in said
+
+
+# ---------------------------------------------------------------------------
+# which addresses the server answers on
+# ---------------------------------------------------------------------------
+
+
+def test_loopback_is_served_on_both_families():
+    """Windows resolves `localhost` to ::1 before 127.0.0.1. Bound to one
+    stack only, the app answers http://127.0.0.1:8000 and refuses
+    http://localhost:8000 — and browsers retry the other family on a timer,
+    so it works *sometimes*, which is far worse to diagnose than never.
+    curl hides it entirely by falling back immediately."""
+    import socket
+
+    from djset.web import _loopback_sockets
+
+    socks = _loopback_sockets(0)
+    try:
+        families = {s.family for s in socks}
+        assert socket.AF_INET in families
+        # IPv6 is allowed to be absent on a host without it, but if the family
+        # exists it must be bound to loopback rather than every interface.
+        for s in socks:
+            assert s.getsockname()[0] in ("127.0.0.1", "::1")
+    finally:
+        for s in socks:
+            s.close()
+
+
+def test_a_non_loopback_host_is_left_to_uvicorn():
+    """Deployments bind 0.0.0.0 behind a proxy; that path must not be
+    hijacked by the local-convenience sockets."""
+    from djset.web import _is_loopback
+
+    assert _is_loopback("127.0.0.1") and _is_loopback("localhost") and _is_loopback("::1")
+    assert not _is_loopback("0.0.0.0")
+    assert not _is_loopback("djset.example.com")

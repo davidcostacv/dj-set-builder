@@ -224,7 +224,7 @@ def analyse(audio: bytes) -> tuple[float, str | None, float] | None:
         log.error("the dsp source needs librosa: pip install librosa")
         return None
 
-    fd, path = tempfile.mkstemp(suffix=".audio", prefix="djset-")
+    fd, path = tempfile.mkstemp(suffix=_suffix_for(audio), prefix="djset-")
     wav: str | None = None
     try:
         with os.fdopen(fd, "wb") as fh:
@@ -264,6 +264,30 @@ def analyse(audio: bytes) -> tuple[float, str | None, float] | None:
 
     key, margin = _estimate_key(y, sr)
     return tempo, key, margin
+
+
+def _suffix_for(audio: bytes) -> str:
+    """The file extension libsndfile needs in order to recognise these bytes.
+
+    soundfile dispatches on the *filename*, not the content, so a preview
+    written to a neutral suffix fails to open even when it is an ordinary MP3.
+    Getting this wrong is quiet and expensive: everything still worked, via
+    ffmpeg, which turned an optional dependency into a required one and paid a
+    subprocess and a temp WAV for every track.
+    """
+    if audio[:3] == b"ID3" or (
+        len(audio) > 1 and audio[0] == 0xFF and (audio[1] & 0xE0) == 0xE0
+    ):
+        return ".mp3"
+    if audio[4:8] == b"ftyp":      # iTunes serves AAC in an MP4 container
+        return ".m4a"
+    if audio[:4] == b"OggS":
+        return ".ogg"
+    if audio[:4] == b"fLaC":
+        return ".flac"
+    if audio[:4] == b"RIFF":
+        return ".wav"
+    return ".mp3"                  # the common case; ffmpeg covers a wrong guess
 
 
 def _transcode(src: str) -> str | None:

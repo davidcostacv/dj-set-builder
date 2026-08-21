@@ -326,10 +326,63 @@ def test_a_good_itunes_match_is_taken(monkeypatch):
     assert src._itunes_preview(T()) == "http://itunes/right.m4a"
 
 
-def test_without_ffmpeg_the_mp3_path_is_unaffected(monkeypatch):
-    """The transcode is optional. Its absence costs only the containers
-    libsndfile cannot read, never the ones it can."""
+def test_transcoding_is_skipped_when_there_is_no_ffmpeg(monkeypatch):
     monkeypatch.setattr("djset.enrichment.dsp.shutil.which", lambda name: None)
     import djset.enrichment.dsp as dsp
 
     assert dsp._transcode("nonexistent.m4a") is None
+
+
+# ---------------------------------------------------------------------------
+# which container these bytes are in
+# ---------------------------------------------------------------------------
+#
+# soundfile dispatches on the *filename*, not the content, so writing a preview
+# to a neutral suffix makes libsndfile refuse an ordinary MP3. That failure is
+# quiet — ffmpeg picks it up and everything still works — which is how a
+# ".audio" suffix turned an optional dependency into a required one and paid a
+# subprocess plus a temp WAV for every track in the library.
+
+
+@pytest.mark.parametrize(
+    "head,expected",
+    [
+        (b"ID3\x04\x00\x00\x00\x00\x00\x00\xff\xfb", ".mp3"),
+        (b"\xff\xfb\x90\x00", ".mp3"),            # frame sync, no ID3 tag
+        (b"\xff\xf3\x90\x00", ".mp3"),            # MPEG 2, layer III
+        (b"\x00\x00\x00\x20ftypM4A ", ".m4a"),    # what iTunes serves
+        (b"OggS\x00\x02\x00\x00", ".ogg"),
+        (b"fLaC\x00\x00\x00\x22", ".flac"),
+        (b"RIFF\x24\x08\x00\x00WAVE", ".wav"),
+    ],
+)
+def test_the_container_is_read_off_the_bytes(head, expected):
+    from djset.enrichment.dsp import _suffix_for
+
+    assert _suffix_for(head + b"\x00" * 64) == expected
+
+
+def test_an_unrecognised_header_guesses_the_common_case():
+    """Deezer's MP3s are the overwhelming majority, and a wrong guess costs
+    only the ffmpeg fallback rather than the track."""
+    from djset.enrichment.dsp import _suffix_for
+
+    assert _suffix_for(b"\x01\x02\x03\x04" * 16) == ".mp3"
+
+
+def test_an_mp3_is_handed_to_librosa_under_a_name_it_can_open(monkeypatch):
+    """The regression this exists to prevent: libsndfile reads MP3 happily,
+    but only if the path says so."""
+    import djset.enrichment.dsp as dsp
+
+    seen = {}
+
+    def spy(path, **kw):
+        seen["path"] = path
+        raise RuntimeError("stop here — the filename is the whole assertion")
+
+    monkeypatch.setattr("librosa.load", spy)
+    monkeypatch.setattr("djset.enrichment.dsp.shutil.which", lambda name: None)
+    dsp.analyse(b"ID3\x04\x00\x00\x00\x00\x00\x00\xff\xfb" + b"\x00" * 40_000)
+
+    assert seen["path"].endswith(".mp3")

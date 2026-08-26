@@ -33,6 +33,7 @@ from ..export import (
 )
 from ..filtering import (
     dedupe_recordings,
+    recording_key,
     filter_tracks,
     genre_availability,
     genre_index,
@@ -367,19 +368,20 @@ def generate(body: GenerateIn) -> dict[str, Any]:
     result = build_set(eligible, library.features, opts, eligible_before_filter=len(pool))
 
     rows = []
-    first_carried = len(result.tracks) - result.appended
     for i, t in enumerate(result.tracks):
         row = _track_json(t, library.features)
-        tr = result.transitions[i] if i < len(result.transitions) else None
+        # Carried tracks open the set and were never mixed, so the transition
+        # list starts where they end rather than at row 0.
+        carried = i < result.carried
+        tr = None
+        if not carried:
+            j = i - result.carried
+            tr = result.transitions[j] if j < len(result.transitions) else None
         row["transition"] = tr.label if tr and tr.quality > 0 else (
             "incompatible" if tr else None
         )
         row["quality"] = tr.quality if tr else None
-        # Carried, not mixed: no BPM or key to sequence on, kept so the
-        # playlist is not quietly shorter than the selection it came from.
-        row["carried"] = i >= first_carried
-        if row["carried"]:
-            row["transition"] = None
+        row["carried"] = carried
         rows.append(row)
 
     total_ms = sum(t.duration_ms or 0 for t in result.tracks)
@@ -391,11 +393,54 @@ def generate(body: GenerateIn) -> dict[str, Any]:
         "pool_size": result.pool_size,
         "reached_target": result.reached_target,
         "compromises": result.compromises,
-        "appended": result.appended,
+        "carried": result.carried,
+        "left_out": _left_out(pool, eligible, result.tracks),
         "duration_ms": total_ms,
         "average_quality": (sum(qualities) / len(qualities)) if qualities else 0.0,
         "explain": result.explain(),
         "limiting_factor": result.limiting_factor.value,
+    }
+
+
+def _left_out(
+    pool: list[Track], eligible: list[Track], placed: list[Track]
+) -> dict[str, Any]:
+    """Everything in the selection that is not in the set, and why.
+
+    A count that does not add up is the most corrosive thing this app can
+    show: it looks like tracks are being eaten. Every one of them is
+    accounted for here, and duplicates are named — "which song, how many
+    times" is the only form of that answer anyone can act on.
+    """
+    in_set = {t.spotify_id for t in placed}
+    missing = [t for t in pool if t.spotify_id not in in_set]
+
+    by_genre = {t.spotify_id for t in pool} - {t.spotify_id for t in eligible}
+    kept_family = {recording_key(t) for t in placed}
+
+    dupes: dict[str, dict[str, Any]] = {}
+    other: list[dict[str, str]] = []
+    for t in missing:
+        if t.spotify_id in by_genre:
+            continue  # the genre filter is reported separately, in pane 2
+        key = recording_key(t)
+        if key in kept_family:
+            row = dupes.setdefault(
+                key, {"title": t.title, "artist": t.artist, "copies": 1}
+            )
+            row["copies"] += 1
+        else:
+            other.append({"title": t.title, "artist": t.artist})
+
+    return {
+        "total": len(missing),
+        "genre_filtered": len(by_genre),
+        "duplicates": sum(d["copies"] - 1 for d in dupes.values()),
+        "duplicate_tracks": sorted(
+            dupes.values(), key=lambda d: (-d["copies"], d["title"])
+        ),
+        "not_chosen": len(other),
+        "not_chosen_sample": other[:5],
     }
 
 

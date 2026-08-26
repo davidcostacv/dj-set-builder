@@ -143,7 +143,7 @@ def test_use_all_overrides_a_track_count():
     assert len(res.tracks) == 9
 
 
-def test_use_all_carries_tracks_it_cannot_sequence_at_the_end():
+def test_use_all_carries_tracks_it_cannot_sequence_at_the_front():
     """"The whole selection" means the whole selection. A track with no BPM or
     key cannot be *mixed* into an order, but dropping it loses it from the
     playlist entirely, which reads as the app quietly eating songs."""
@@ -152,8 +152,8 @@ def test_use_all_carries_tracks_it_cannot_sequence_at_the_end():
     res = build_set(tracks, feats, SequenceOptions(use_all=True))
 
     assert len(res.tracks) == 5
-    assert res.tracks[-1].spotify_id == "t2"      # carried, at the end
-    assert res.appended == 1
+    assert res.tracks[0].spotify_id == "t2"       # carried, opening the set
+    assert res.carried == 1
     assert [t.spotify_id for t in res.sequenced] == ["t0", "t1", "t3", "t4"]
 
 
@@ -174,7 +174,7 @@ def test_the_explanation_says_they_were_carried_not_mixed():
     feats["t1"] = AudioFeatures("t1", None, None, source="test")
     res = build_set(tracks, feats, SequenceOptions(use_all=True))
     assert "no BPM or key" in res.explain()
-    assert "carried at the end" in res.explain()
+    assert "open the set" in res.explain()
 
 
 def test_an_explicit_count_is_not_padded_with_unmixable_tracks():
@@ -185,7 +185,7 @@ def test_an_explicit_count_is_not_padded_with_unmixable_tracks():
     res = build_set(tracks, feats, SequenceOptions(target_tracks=3))
 
     assert len(res.tracks) == 3
-    assert res.appended == 0
+    assert res.carried == 0
     assert "t2" not in {t.spotify_id for t in res.tracks}
 
 

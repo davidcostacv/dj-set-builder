@@ -260,6 +260,44 @@ function keyCell(t) {
        + `catalogue key">~</span>`;
 }
 
+// Everything in the selection that is not in the set, and why. A count that
+// does not add up is the most corrosive thing this app can show — it reads as
+// tracks being eaten — so nothing is left implicit.
+function renderLeftOut(info) {
+  const box = $("left-out");
+  if (!box) return;
+  if (!info || !info.total) {
+    box.hidden = true;
+    return;
+  }
+  const bits = [];
+  if (info.duplicates) {
+    const named = info.duplicate_tracks
+      .map((d) => `${escapeHtml(d.artist)} — ${escapeHtml(d.title)}` +
+                  (d.copies > 2 ? ` (${d.copies}×)` : ""))
+      .join("<br>");
+    bits.push(
+      `<b>${info.duplicates}</b> duplicate${info.duplicates === 1 ? "" : "s"}` +
+      ` — the same recording more than once, so it plays once:<div class="ind">${named}</div>`
+    );
+  }
+  if (info.genre_filtered) {
+    bits.push(`<b>${info.genre_filtered}</b> removed by the genre filter.`);
+  }
+  if (info.not_chosen) {
+    const sample = info.not_chosen_sample
+      .map((d) => `${escapeHtml(d.artist)} — ${escapeHtml(d.title)}`).join("<br>");
+    bits.push(
+      `<b>${info.not_chosen}</b> not chosen — the set reached its target first:` +
+      `<div class="ind">${sample}${info.not_chosen > info.not_chosen_sample.length
+        ? `<br>…and ${info.not_chosen - info.not_chosen_sample.length} more` : ""}</div>`
+    );
+  }
+  box.innerHTML = `<summary>${info.total} track${info.total === 1 ? "" : "s"} ` +
+    `from the selection are not in this set</summary><div class="body">${bits.join("")}</div>`;
+  box.hidden = false;
+}
+
 function renderSet(rows) {
   const body = document.querySelector("#result tbody");
   body.innerHTML = "";
@@ -353,7 +391,7 @@ async function generate() {
     // total says whether this is a set resting on two estimates or on two
     // hundred.
     const estimated = state.set.filter((t) => t.key_estimated).length;
-    const carried = data.appended || 0;
+    const carried = data.carried || 0;
     $("result-summary").textContent =
       `${data.count} tracks · ${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m` +
       // Quality is over the sequenced part only; saying so stops the number
@@ -361,8 +399,9 @@ async function generate() {
       ` · ${Math.round(data.average_quality * 100)}% quality over the ` +
       `${data.count - carried} mixed` +
       (data.compromises ? ` · ${data.compromises} forced` : "") +
-      (carried ? ` · ${carried} carried at the end (no BPM/key)` : "") +
+      (carried ? ` · ${carried} opening the set (no BPM/key)` : "") +
       (estimated ? ` · ${estimated} key${estimated === 1 ? "" : "s"} measured, not verified` : "");
+    renderLeftOut(data.left_out);
     $("result-status").textContent = data.reached_target
       ? "Set ready. Nothing has been written to Spotify yet."
       : shortSetMessage(data);

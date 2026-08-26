@@ -199,15 +199,17 @@ class SetResult:
     # Transitions that had to break the active predicates, which only happens
     # in "reorder everything" mode where placing every track is the point.
     compromises: int = 0
-    # Tracks carried at the end because they have no BPM or key to sequence on.
-    # They are part of `tracks` — the count is here so everything downstream
-    # can say so rather than presenting them as though they were mixed in.
-    appended: int = 0
+    # Tracks carried at the *front* because they have no BPM or key to
+    # sequence on. They are part of `tracks` — the count is here so everything
+    # downstream can say so rather than presenting them as though they were
+    # mixed in.
+    carried: int = 0
 
     @property
     def sequenced(self) -> list[Track]:
-        """The part that was actually put in order."""
-        return self.tracks[: len(self.tracks) - self.appended] if self.appended else self.tracks
+        """The part that was actually put in order — everything after the
+        carried opening."""
+        return self.tracks[self.carried:]
 
     @property
     def reached_target(self) -> bool:
@@ -235,10 +237,10 @@ class SetResult:
                     f" {self.compromises} transition(s) had to break the "
                     "BPM/key rules to place every track."
                 )
-            if self.appended:
+            if self.carried:
                 base += (
-                    f" {self.appended} track(s) have no BPM or key, so they are "
-                    "carried at the end rather than dropped."
+                    f" {self.carried} track(s) have no BPM or key, so they open "
+                    "the set rather than being dropped."
                 )
             return base
         return (
@@ -548,15 +550,19 @@ def build_set(
         # Asking for the whole selection means the whole selection. A track
         # with no BPM or key cannot be *mixed* into an order, but dropping it
         # loses it from the playlist entirely — which reads as the app quietly
-        # eating songs. Carry them at the end instead, where they are visibly
-        # unsequenced rather than invisibly gone.
+        # eating songs.
+        #
+        # They go at the *front*, before the mix starts, so the sequenced part
+        # runs to the end uninterrupted: a set that ends on unmixable tracks
+        # falls apart exactly where it should be strongest, while one that
+        # opens with them is a warm-up before the mixing begins.
         #
         # Only here: an explicit "20 tracks" is a request to choose 20, and
         # nothing is being dropped when the rest were never asked for.
         placed = {t.spotify_id for t in result.tracks}
         leftovers = [t for t in tracks if t.spotify_id not in placed]
-        result.tracks.extend(leftovers)
-        result.appended = len(leftovers)
+        result.tracks = [*leftovers, *result.tracks]
+        result.carried = len(leftovers)
 
     if not result.reached_target:
         result.limiting_factor = _diagnose(

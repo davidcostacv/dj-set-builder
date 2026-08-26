@@ -556,7 +556,7 @@ def test_a_non_loopback_host_is_left_to_uvicorn():
     assert not _is_loopback("djset.example.com")
 
 
-def test_carried_tracks_are_flagged_and_last(client):
+def test_carried_tracks_are_flagged_and_first(client):
     """"The whole selection" must not quietly return fewer tracks than the
     selection holds."""
     from djset import db
@@ -577,15 +577,15 @@ def test_carried_tracks_are_flagged_and_last(client):
         "sources": ["pl-a"], "target_kind": "all", "target_value": 100}).json()
 
     rows = body["tracks"]
-    assert body["appended"] >= 1
+    assert body["carried"] >= 1
     carried = [r for r in rows if r["carried"]]
-    assert len(carried) == body["appended"]
-    assert all(r["carried"] for r in rows[-body["appended"]:])   # they are the tail
+    assert len(carried) == body["carried"]
+    assert all(r["carried"] for r in rows[: body["carried"]])   # they open the set
     assert all(r["transition"] is None for r in carried)
 
 
 def test_an_explicit_count_carries_nothing(client):
     body = client.post("/api/generate", json={
         "sources": ["pl-a"], "target_kind": "tracks", "target_value": 2}).json()
-    assert body["appended"] == 0
+    assert body["carried"] == 0
     assert all(not r["carried"] for r in body["tracks"])

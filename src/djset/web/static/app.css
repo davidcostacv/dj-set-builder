@@ -131,6 +131,12 @@ tbody tr { cursor: grab; }
    Deliberately quiet: it qualifies the value, it is not a warning. */
 .est { color: var(--warn); margin-left: .15rem; cursor: help; font-weight: 600; }
 
+.dupes { font-size: .78rem; color: var(--muted); margin-top: .4rem; }
+.dupes .pl { margin-top: .45rem; }
+.dupes .songs { margin: .2rem 0 .3rem .8rem; color: var(--text); }
+.dupes button { margin-top: .25rem; }
+.dupes .warn { color: var(--warn); }
+
 .left-out { font-size: .8rem; color: var(--muted); margin-top: .4rem; }
 .left-out summary { cursor: pointer; }
 .left-out .body { margin-top: .35rem; line-height: 1.5; }

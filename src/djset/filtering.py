@@ -307,6 +307,60 @@ def song_family(track: Track) -> str:
     return f"{normalize_artist(track.primary_artist)}|{bare}"
 
 
+@dataclass(frozen=True)
+class DuplicateGroup:
+    """One recording that appears in a playlist more than once."""
+
+    keep: Track
+    remove: list[Track]
+
+    @property
+    def copies(self) -> int:
+        return len(self.remove) + 1
+
+
+def duplicate_groups(
+    tracks: list[Track], features: dict[str, AudioFeatures] | None = None
+) -> list[DuplicateGroup]:
+    """Which recordings appear more than once, and which copy is worth keeping.
+
+    The same grouping :func:`dedupe_recordings` uses, but returning what was
+    collapsed rather than the survivors. Removing tracks from someone's
+    playlist is not something to do from an inference they cannot inspect —
+    this is what lets the app say "this song, this many times" before touching
+    anything.
+    """
+    kept = {t.spotify_id for t in dedupe_recordings(tracks, features)}
+    order: list[str] = []
+    grouped: dict[str, list[Track]] = {}
+    isrc_group: dict[str, str] = {}
+
+    for t in tracks:
+        key = recording_key(t)
+        if t.isrc and t.isrc in isrc_group:
+            key = isrc_group[t.isrc]
+        if key not in grouped:
+            order.append(key)
+            grouped[key] = []
+        grouped[key].append(t)
+        if t.isrc:
+            isrc_group.setdefault(t.isrc, key)
+
+    out = []
+    for key in order:
+        members = grouped[key]
+        if len(members) < 2:
+            continue
+        survivor = next((m for m in members if m.spotify_id in kept), members[0])
+        out.append(
+            DuplicateGroup(
+                keep=survivor,
+                remove=[m for m in members if m is not survivor],
+            )
+        )
+    return out
+
+
 def dedupe_recordings(
     tracks: list[Track], features: dict[str, AudioFeatures] | None = None
 ) -> list[Track]:

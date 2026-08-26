@@ -112,8 +112,68 @@ function renderSources() {
       e.target.checked ? state.selected.add(s.id) : state.selected.delete(s.id);
       state.picked = null;          // a changed source invalidates a subset
       refreshSelection();
+      refreshDupes();
     });
     box.appendChild(row);
+  }
+}
+
+// A selected playlist holding the same recording twice. Surfaced here rather
+// than only at Generate, because the fix belongs to the playlist, not the set.
+async function refreshDupes() {
+  const box = $("dupes");
+  if (!box) return;
+  if (!state.selected.size) { box.hidden = true; return; }
+  let data;
+  try {
+    data = await api("/api/duplicates", { sources: [...state.selected] });
+  } catch { box.hidden = true; return; }
+
+  const lists = data.playlists || [];
+  if (!lists.length) { box.hidden = true; return; }
+
+  box.innerHTML = lists.map((p) => {
+    const songs = p.songs
+      .map((sg) => `${escapeHtml(sg.artist)} — ${escapeHtml(sg.title)} <b>×${sg.copies}</b>`)
+      .join("<br>");
+    return `<div class="pl"><span class="warn">${p.extra_copies}` +
+      ` duplicate${p.extra_copies === 1 ? "" : "s"}</span> in ` +
+      `“${escapeHtml(p.name)}”:<div class="songs">${songs}</div>` +
+      `<button class="small" data-pid="${p.playlist_id}" data-name="${escapeHtml(p.name)}"` +
+      ` data-n="${p.extra_copies}">Remove ${p.extra_copies} from this playlist</button></div>`;
+  }).join("");
+
+  for (const btn of box.querySelectorAll("button")) {
+    btn.addEventListener("click", () => dedupePlaylist(btn));
+  }
+  box.hidden = false;
+}
+
+async function dedupePlaylist(btn) {
+  const { pid, name, n } = btn.dataset;
+  // This deletes from a real playlist. Ask before, and name the cost.
+  if (!confirm(
+    `Remove ${n} duplicate track${n === "1" ? "" : "s"} from “${name}”?
+
+` +
+    "This edits the playlist in your Spotify account. The first copy of each " +
+    "song is kept; the extra copies are removed. It cannot be undone from here."
+  )) return;
+
+  btn.disabled = true;
+  btn.textContent = "Removing…";
+  try {
+    const data = await api("/api/dedupe", { playlist_id: pid });
+    toast(`Removed ${data.removed} duplicate${data.removed === 1 ? "" : "s"} — ` +
+          `“${name}” now has ${data.remaining} tracks.`);
+    state.sources = await api("/api/sources");
+    renderSources();
+    await refreshDupes();
+    refreshSelection();
+  } catch (err) {
+    toast(err.message, true);
+    btn.disabled = false;
+    btn.textContent = `Remove ${n} from this playlist`;
   }
 }
 

@@ -281,6 +281,49 @@ def update_playlist_order(
     conn.commit()
 
 
+def remove_duplicates(
+    client,
+    playlist_id: str,
+    tracks: list[Track],
+    groups: list,
+    *,
+    progress: Progress = _noop,
+) -> int:
+    """Rewrite ``playlist_id`` without the duplicate copies. Returns how many
+    entries were removed.
+
+    A wholesale replace rather than a per-item delete: Spotify's remove
+    endpoint matches by URI, and both copies of a duplicate share one, so
+    asking it to remove "that URI" would take the survivor too. Sending the
+    kept order back is unambiguous about what should be there afterwards.
+
+    Deliberately does not touch the exports table. This is somebody's own
+    playlist being tidied, not a set this app produced, and recording it as an
+    export would make a later save think it had already created it.
+    """
+    doomed = {t.spotify_id for g in groups for t in g.remove}
+    if not doomed:
+        return 0
+    keep = [t for t in tracks if t.spotify_id not in doomed]
+    if not keep:
+        raise ExportError("Refusing to empty the playlist.")
+
+    uris = track_uris(keep)
+    progress(f"Rewriting {len(uris)} tracks…")
+    try:
+        client.replace_items(playlist_id, uris[:CHUNK])
+        for start in range(CHUNK, len(uris), CHUNK):
+            client.add_items(playlist_id, uris[start : start + CHUNK])
+    except HttpError as exc:
+        if exc.status in (403, 401):
+            raise ExportError(
+                "Spotify refused the edit. You can only change playlists you "
+                "own — a followed or collaborative one belongs to someone else."
+            ) from exc
+        raise ExportError(f"Could not rewrite the playlist (HTTP {exc.status}).") from exc
+    return len(doomed)
+
+
 def split_by_genre(
     conn: sqlite3.Connection,
     client,

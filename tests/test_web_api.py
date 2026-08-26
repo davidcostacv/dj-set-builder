@@ -589,3 +589,69 @@ def test_an_explicit_count_carries_nothing(client):
         "sources": ["pl-a"], "target_kind": "tracks", "target_value": 2}).json()
     assert body["carried"] == 0
     assert all(not r["carried"] for r in body["tracks"])
+
+
+# ---------------------------------------------------------------------------
+# duplicates in a source playlist
+# ---------------------------------------------------------------------------
+
+
+def test_duplicates_are_reported_per_playlist_with_names_and_counts(client):
+    """Removing tracks from someone's playlist must not rest on an inference
+    they cannot inspect: the answer has to be "this song, this many times"."""
+    from djset import db
+    from djset.models import Track
+    from djset.web import app as web_app
+
+    with db.session() as conn:
+        for i in (1, 2):
+            db.upsert_track(conn, Track(
+                spotify_id=f"dup{i}", uri=f"spotify:track:dup{i}",
+                title="Twice Over", artist="A Band", artist_names=["A Band"],
+                isrc="XX1234567890"))
+            conn.execute(
+                "INSERT OR REPLACE INTO playlist_tracks "
+                "(playlist_id, spotify_id, position) VALUES ('pl-a', ?, ?)",
+                (f"dup{i}", 90 + i))
+    web_app.library.load()
+
+    body = client.post("/api/duplicates", json={"sources": ["pl-a"]}).json()
+    assert body["playlists"], "the duplicate was not spotted"
+    pl = body["playlists"][0]
+    assert pl["extra_copies"] == 1
+    assert pl["songs"][0]["title"] == "Twice Over"
+    assert pl["songs"][0]["copies"] == 2
+
+
+def test_a_clean_playlist_reports_nothing(client):
+    body = client.post("/api/duplicates", json={"sources": ["pl-b"]}).json()
+    assert body["playlists"] == []
+
+
+def test_liked_songs_cannot_be_rewritten(client):
+    """It is not a playlist Spotify lets you replace, and pretending otherwise
+    would fail halfway through someone's library."""
+    from djset.models import LIKED_SONGS_ID
+
+    r = client.post("/api/dedupe", json={"playlist_id": LIKED_SONGS_ID})
+    assert r.status_code == 400
+
+
+def test_dedupe_refuses_a_playlist_it_does_not_know(client):
+    r = client.post("/api/dedupe", json={"playlist_id": "not-a-playlist"})
+    assert r.status_code == 404
+
+
+def test_dedupe_on_a_clean_playlist_writes_nothing(client, monkeypatch):
+    from djset.web import app as web_app
+
+    called = []
+    monkeypatch.setattr(web_app, "load_config", lambda *a, **k: object())
+    monkeypatch.setattr(web_app, "SpotifyAuth", lambda cfg: object())
+    monkeypatch.setattr(web_app, "SpotifyClient", lambda auth: called.append(1))
+    monkeypatch.setattr(web_app, "remove_duplicates",
+                        lambda *a, **k: called.append("wrote") or 0)
+
+    body = client.post("/api/dedupe", json={"playlist_id": "pl-b"}).json()
+    assert body["removed"] == 0
+    assert "wrote" not in called       # never touched the account

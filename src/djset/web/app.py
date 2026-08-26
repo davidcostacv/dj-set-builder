@@ -29,10 +29,12 @@ from ..export import (
     ExportError,
     describe_set,
     export_to_spotify,
+    remove_duplicates,
     update_playlist_order,
 )
 from ..filtering import (
     dedupe_recordings,
+    duplicate_groups,
     recording_key,
     filter_tracks,
     genre_availability,
@@ -40,7 +42,7 @@ from ..filtering import (
     sequenceable,
     summarize,
 )
-from ..models import Track
+from ..models import LIKED_SONGS_ID, Track
 from ..sequencing import (
     DEFAULT_TOLERANCE,
     MAX_TOLERANCE,
@@ -441,6 +443,90 @@ def _left_out(
         ),
         "not_chosen": len(other),
         "not_chosen_sample": other[:5],
+    }
+
+
+class DedupeIn(BaseModel):
+    playlist_id: str
+
+
+@app.post("/api/duplicates")
+def duplicates(body: SelectionIn) -> dict[str, Any]:
+    """Which of the selected playlists contain the same recording twice.
+
+    Reported per playlist rather than over the pool: the fix is applied to one
+    playlist at a time, so an answer spanning several would not tell anyone
+    what to do about it.
+    """
+    library.ensure()
+    by_id = {p["spotify_id"]: p["name"] for p in library.playlists}
+    out = []
+    for pid in body.sources:
+        if pid == LIKED_SONGS_ID or pid not in library.members:
+            continue
+        tracks = [library.by_id[i] for i in library.members[pid] if i in library.by_id]
+        groups = duplicate_groups(tracks, library.features)
+        if not groups:
+            continue
+        out.append({
+            "playlist_id": pid,
+            "name": by_id.get(pid) or "(untitled)",
+            "tracks": len(tracks),
+            "extra_copies": sum(len(g.remove) for g in groups),
+            "songs": [
+                {"title": g.keep.title, "artist": g.keep.artist, "copies": g.copies}
+                for g in groups
+            ],
+        })
+    return {"playlists": out}
+
+
+@app.post("/api/dedupe")
+def dedupe(body: DedupeIn) -> dict[str, Any]:
+    """Rewrite one playlist without its duplicate copies. Writes to the account."""
+    library.ensure()
+    pid = body.playlist_id
+    if pid == LIKED_SONGS_ID:
+        raise HTTPException(400, "Liked Songs cannot be rewritten this way.")
+    if pid not in library.members:
+        raise HTTPException(404, "That playlist is not in the library.")
+
+    tracks = [library.by_id[i] for i in library.members[pid] if i in library.by_id]
+    groups = duplicate_groups(tracks, library.features)
+    if not groups:
+        return {"removed": 0, "remaining": len(tracks), "songs": []}
+
+    songs = [
+        {"title": g.keep.title, "artist": g.keep.artist, "copies": g.copies}
+        for g in groups
+    ]
+    try:
+        client = SpotifyClient(SpotifyAuth(load_config()))
+        removed = remove_duplicates(client, pid, tracks, groups)
+    except ConfigError as exc:
+        raise HTTPException(500, str(exc))
+    except ExportError as exc:
+        raise HTTPException(502, str(exc))
+
+    # The local copy is now stale in a way the user can see, so correct it
+    # rather than waiting for the next Sync.
+    doomed = {t.spotify_id for g in groups for t in g.remove}
+    with db.session() as conn:
+        for tid in doomed:
+            conn.execute(
+                "DELETE FROM playlist_tracks WHERE playlist_id=? AND spotify_id=?",
+                (pid, tid),
+            )
+        conn.execute(
+            "UPDATE playlists_cache SET track_count = ? WHERE spotify_id = ?",
+            (len(tracks) - removed, pid),
+        )
+    library.load()
+
+    return {
+        "removed": removed,
+        "remaining": len(tracks) - removed,
+        "songs": songs,
     }
 
 

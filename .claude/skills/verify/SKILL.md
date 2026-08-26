@@ -88,8 +88,24 @@ that project instead. Start the server yourself and open it with
 `preview_start {url}`.
 
 Routes worth driving: `/api/health` (proves which database is open),
-`/api/selection`, `/api/generate` (creates nothing), `/api/job`. Only
-`/api/export` writes to the Spotify account.
+`/api/selection`, `/api/generate` (creates nothing), `/api/duplicates`
+(reports only), `/api/job`.
+
+**Three routes write to the Spotify account**: `/api/export`,
+`/api/reorder/{id}` and `/api/dedupe` — the last one *deletes* tracks from a
+real playlist. Drive the page with a fetch guard installed so a stray click
+cannot reach any of them:
+
+```js
+const real = window.fetch.bind(window);
+window.fetch = async (u, o) => {
+  if (/\/api\/(export|dedupe|reorder)/.test(String(u))) throw new Error("BLOCKED");
+  return real(u, o);
+};
+```
+
+Override `window.confirm` to return false, then true, to check a destructive
+button is actually gated rather than only appearing to be.
 
 ## Driving the window
 

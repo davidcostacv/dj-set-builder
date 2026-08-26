@@ -156,8 +156,9 @@ async function dedupePlaylist(btn) {
     `Remove ${n} duplicate track${n === "1" ? "" : "s"} from “${name}”?
 
 ` +
-    "This edits the playlist in your Spotify account. The first copy of each " +
-    "song is kept; the extra copies are removed. It cannot be undone from here."
+    "This edits the playlist in your Spotify account. Where one copy has a BPM " +
+    "and key and another does not, the one with data is kept; otherwise the " +
+    "first. It cannot be undone from here."
   )) return;
 
   btn.disabled = true;
@@ -353,8 +354,10 @@ function renderLeftOut(info) {
         ? `<br>…and ${info.not_chosen - info.not_chosen_sample.length} more` : ""}</div>`
     );
   }
-  box.innerHTML = `<summary>${info.total} track${info.total === 1 ? "" : "s"} ` +
-    `from the selection are not in this set</summary><div class="body">${bits.join("")}</div>`;
+  const one = info.total === 1;
+  box.innerHTML = `<summary>${info.total} track${one ? "" : "s"} from the ` +
+    `selection ${one ? "is" : "are"} not in this set</summary>` +
+    `<div class="body">${bits.join("")}</div>`;
   box.hidden = false;
 }
 

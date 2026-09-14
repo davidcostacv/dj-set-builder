@@ -5,8 +5,9 @@ description: How to build, launch and drive djset to observe a change at its sur
 
 # Verifying djset
 
-Three surfaces: the CLI (`python -m djset.cli …`), a PySide6 window
-(`djset ui`), and a web app (`djset serve`, then http://127.0.0.1:8000).
+Four surfaces: the CLI (`python -m djset.cli …`), a PySide6 window
+(`djset ui`), a web app (`djset serve`, then http://127.0.0.1:8000), and a
+Telegram bot (`djset telegram`).
 
 The web app is where the project is heading; the Qt window still works. Both
 read the same SQLite library, so a change to the engine shows up in both.
@@ -131,6 +132,42 @@ sequencing path with nothing written to Spotify.
 
 `isVisible()` is always False for a child of an unshown window — assert on
 `isHidden()` instead, or the check passes no matter what the code does.
+
+## Driving the Telegram bot
+
+`api.telegram.org` is unreachable from a sandboxed session (blocked by egress
+policy) and a real Spotify login is an interactive per-account browser flow —
+neither is available here. Don't fall back to calling `cmd_playlists(...)`
+etc. directly: that skips `telegram.ext.Application`'s handler dispatch, the
+`restricted` decorator's real code path, and — the part that actually matters
+for a bug like "message too long" — `ExtBot.send_message`'s real HTTP
+transport, which is where Telegram's 4096-char limit is enforced.
+
+Instead, run the real `Application` against a local stand-in for Telegram's
+HTTP API (`Application.builder().token(...).base_url("http://127.0.0.1:<port>/bot").build()`),
+then feed it a real `Update` via `await app.process_update(Update.de_json(...))`
+— this is the same call path `run_polling` uses per update. The stand-in only
+needs `getMe` (called once, at `app.initialize()`) and `sendMessage`; make the
+mock enforce the same 4096-char cap Telegram does, returning the same
+`{"ok": false, "error_code": 400, "description": "Bad Request: message is too
+long"}` shape, so a message that's really too long fails here exactly as it
+does live rather than silently "succeeding" against a mock that never checks.
+
+PTB posts `application/x-www-form-urlencoded`, not JSON — a mock that only
+parses `json.loads(body)` sees an empty payload and every assertion on `text`
+silently passes on garbage. Parse both.
+
+`Application.process_update()` does **not** re-raise a handler's exception to
+the caller — it logs it internally and returns normally (this is the "No
+error handlers are registered, logging exception" line a real deployment
+prints to its own console). To confirm a failure happened, attach a
+`logging.Handler` to `logging.getLogger("telegram.ext.Application")` and
+check what it captured — `await app.process_update(...)` completing without
+raising is not evidence the send succeeded.
+
+To reproduce a bug against the previous commit without disturbing this
+checkout, `git worktree add <path> <commit>` and point `sys.path` at
+`<path>/src` instead of switching branches in place.
 
 ## Gotchas
 

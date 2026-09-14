@@ -386,6 +386,51 @@ wants both available.
 
 ---
 
+## Telegram bot
+
+`djset telegram` runs the same engine behind a Telegram bot instead of the
+browser — same reasoning as the web build: a thin translation layer over
+`djset.spotify` / `djset.filtering` / `djset.sequencing` / `djset.export`,
+nothing more.
+
+```bash
+pip install -e ".[telegram]"
+djset login          # once — the bot never opens a browser itself
+djset telegram
+```
+
+Add to `.env`:
+
+- `TELEGRAM_BOT_TOKEN` — from [@BotFather](https://t.me/BotFather).
+- `TELEGRAM_OWNER_ID` — your numeric Telegram user id (message
+  [@userinfobot](https://t.me/userinfobot) to get it). **Required.** A command
+  here can create or delete playlists in your Spotify account, so the bot
+  refuses anyone whose id does not match this one.
+
+Commands, from a chat with the bot:
+
+| | |
+|---|---|
+| `/playlists` | list your synced playlists, numbered |
+| `/sync` | pull playlists from Spotify into the local cache |
+| `/enrich [N]` | fill in BPM/key (optionally a random sample of N, to check coverage first) |
+| `/status` | progress of a running sync or enrich |
+| `/mix <#\|all> [count] [bpm\|key\|bpm+key]` | sequence a set and save it to Spotify — `#` is a number from `/playlists` |
+| `/delete <name or link>` | remove a playlist from your account, with a confirm step |
+| `/whoami` | check the saved Spotify login |
+
+`/mix` and `/delete` write to your account. Deleting asks for confirmation
+first (Spotify has no undo — it unfollows the playlist, which is how removal
+works for a playlist you own as well as one you followed). `/sync` and
+`/enrich` run as one background job at a time, same as the web UI's job
+runner — a second one is refused with the running job's status rather than
+queued.
+
+The bot process must already have a saved Spotify login (`djset login`, run
+once interactively) before it starts; it deliberately never triggers the PKCE
+flow itself, since that opens a browser and blocks for up to three minutes,
+which would freeze the bot for every chat while it waited.
+
 ## Packaging
 
 ```bash
@@ -448,6 +493,7 @@ to use it during development.
 | `djset generate` | sequence a set and create the playlist (`--dry-run` to preview) |
 | `djset exports` | list playlists this app has created in your account |
 | `djset ui` | open the desktop window |
+| `djset telegram` | run the Telegram bot (needs `TELEGRAM_BOT_TOKEN`) |
 | `djset doctor` | probe the live API against the build brief and report drift |
 | `djset manual <id> --bpm 128 --key 8A` | hand-enter a straggler; highest trust |
 | `djset about` | paths and the required GetSongBPM attribution |

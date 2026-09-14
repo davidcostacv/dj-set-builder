@@ -48,6 +48,33 @@ def test_snapshot_cache(conn):
     assert db.cached_snapshot(conn, "p1") == "snap2"
 
 
+def test_delete_playlist_cache_forgets_membership_and_exports(conn, track_factory):
+    db.upsert_track(conn, track_factory(1))
+    db.set_playlist_members(conn, "p1", [("t1", 0, None)])
+    db.upsert_playlist_cache(conn, "p1", "House", "snap1", 1)
+    db.record_export(conn, "p1", "hash1", "House Mix")
+
+    db.delete_playlist_cache(conn, "p1")
+
+    assert db.tracks_in_playlists(conn, ["p1"]) == []
+    assert [p["spotify_id"] for p in db.cached_playlists(conn)] == []
+    assert db.find_export(conn, "hash1", "House Mix") is None
+
+
+def test_delete_playlist_cache_leaves_other_playlists_alone(conn, track_factory):
+    db.upsert_track(conn, track_factory(1))
+    db.upsert_track(conn, track_factory(2))
+    db.set_playlist_members(conn, "p1", [("t1", 0, None)])
+    db.set_playlist_members(conn, "p2", [("t2", 0, None)])
+    db.upsert_playlist_cache(conn, "p1", "House", None, 1)
+    db.upsert_playlist_cache(conn, "p2", "Techno", None, 1)
+
+    db.delete_playlist_cache(conn, "p1")
+
+    assert {t.spotify_id for t in db.tracks_in_playlists(conn, ["p2"])} == {"t2"}
+    assert [p["spotify_id"] for p in db.cached_playlists(conn)] == ["p2"]
+
+
 def test_genre_aliases_are_seeded_and_editable(conn):
     aliases = db.genre_aliases(conn)
     assert aliases["trap latino"] == "reggaeton"

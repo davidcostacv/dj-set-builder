@@ -441,6 +441,19 @@ def cached_playlists(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     )
 
 
+def delete_playlist_cache(conn: sqlite3.Connection, playlist_id: str) -> None:
+    """Forget a playlist that no longer exists in the account.
+
+    Called after a playlist is deleted (unfollowed) on Spotify's side, so the
+    local cache does not keep offering it in listings or as a `generate`
+    source, and a future export under the same name is not mistaken for a
+    duplicate of a playlist that is gone.
+    """
+    conn.execute("DELETE FROM playlist_tracks WHERE playlist_id = ?", (playlist_id,))
+    conn.execute("DELETE FROM playlists_cache WHERE spotify_id = ?", (playlist_id,))
+    conn.execute("DELETE FROM exports WHERE playlist_id = ?", (playlist_id,))
+
+
 # --------------------------------------------------------------------------
 # exports
 # --------------------------------------------------------------------------

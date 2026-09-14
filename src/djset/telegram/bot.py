@@ -116,15 +116,41 @@ def _playlist_rows(conn) -> list[dict[str, Any]]:
     ]
 
 
-def _format_playlists(rows: list[dict[str, Any]]) -> str:
+def _playlist_lines(rows: list[dict[str, Any]]) -> list[str]:
     if not rows:
-        return "No playlists cached yet. Run /sync first."
+        return ["No playlists cached yet. Run /sync first."]
     lines = ["Your playlists:"]
     for i, r in enumerate(rows, 1):
         lines.append(f"{i}. {r['name']} — {r['tracks']} tracks")
     lines.append("\nUse /mix <number> [count] [bpm|key|bpm+key] to build a set from one.")
     lines.append("Use /mix all [count] to draw from your whole library.")
-    return "\n".join(lines)
+    return lines
+
+
+def _format_playlists(rows: list[dict[str, Any]]) -> str:
+    return "\n".join(_playlist_lines(rows))
+
+
+# Telegram's sendMessage rejects the whole message past this length rather
+# than truncating it, and a library of a few hundred playlists (real
+# libraries in this app's own README run to 274) produces a listing longer
+# than that. Chunking on line boundaries keeps each playlist's line intact.
+TELEGRAM_MESSAGE_LIMIT = 4096
+
+
+def _chunk_lines(lines: list[str], limit: int = TELEGRAM_MESSAGE_LIMIT - 100) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    length = 0
+    for line in lines:
+        if current and length + len(line) + 1 > limit:
+            chunks.append("\n".join(current))
+            current, length = [], 0
+        current.append(line)
+        length += len(line) + 1
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
 
 
 def _format_job(state: JobState) -> str:
@@ -213,11 +239,12 @@ async def cmd_whoami(update, context) -> None:
 
 @restricted
 async def cmd_playlists(update, context) -> None:
-    def work() -> str:
+    def work() -> list[str]:
         with db.session() as conn:
-            return _format_playlists(_playlist_rows(conn))
+            return _chunk_lines(_playlist_lines(_playlist_rows(conn)))
 
-    await update.effective_message.reply_text(await _to_thread(work))
+    for chunk in await _to_thread(work):
+        await update.effective_message.reply_text(chunk)
 
 
 @restricted

@@ -399,6 +399,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_telegram(args: argparse.Namespace) -> int:
+    """Run the Telegram bot. Foreground process, like `djset serve`."""
+    try:
+        from .telegram import run_bot
+    except ImportError as exc:
+        print(f"The Telegram bot needs python-telegram-bot: {exc}")
+        print("  pip install python-telegram-bot")
+        return 1
+    return run_bot()
+
+
 def cmd_token(args: argparse.Namespace) -> int:
     """Print the saved refresh token, for moving it to a server's secret store.
 
@@ -714,6 +725,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="which peers may set those headers (default: 127.0.0.1; '*' trusts any)",
     )
     sp.set_defaults(func=cmd_serve)
+
+    sp = sub.add_parser("telegram", help="run the Telegram bot (needs TELEGRAM_BOT_TOKEN)")
+    sp.set_defaults(func=cmd_telegram)
 
     sp = sub.add_parser("about", help="paths and required attribution")
     sp.set_defaults(func=cmd_about)

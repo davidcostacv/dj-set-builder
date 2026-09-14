@@ -9,7 +9,13 @@ lazy, function-local import, so these tests run without the optional
 dependency installed.
 """
 
-from djset.telegram.bot import _find_playlist, _format_playlists, _resolve_source
+from djset.telegram.bot import (
+    _chunk_lines,
+    _find_playlist,
+    _format_playlists,
+    _playlist_lines,
+    _resolve_source,
+)
 
 ROWS = [
     {"id": "p1", "name": "House Mix", "tracks": 42},
@@ -70,3 +76,31 @@ def test_format_playlists_numbers_match_resolve_source():
     text = _format_playlists(ROWS)
     for i, row in enumerate(ROWS, 1):
         assert f"{i}. {row['name']}" in text
+
+
+def test_chunk_lines_fits_everything_in_one_chunk_when_short():
+    chunks = _chunk_lines(["a", "b", "c"])
+    assert chunks == ["a\nb\nc"]
+
+
+def test_chunk_lines_splits_a_library_too_big_for_one_telegram_message():
+    # A real djset library can hold hundreds of playlists (274, per the
+    # README) — enough that the numbered listing alone exceeds Telegram's
+    # 4096-character cap on a single message.
+    big_rows = [{"id": f"p{i}", "name": f"Playlist number {i}", "tracks": i} for i in range(400)]
+    lines = _playlist_lines(big_rows)
+    chunks = _chunk_lines(lines)
+
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert len(chunk) <= 4096
+    # No playlist's line was split across a chunk boundary or dropped.
+    joined = "\n".join(chunks)
+    for row in big_rows:
+        assert f"{row['name']} — {row['tracks']} tracks" in joined
+
+
+def test_chunk_lines_never_splits_a_single_line_even_over_the_limit():
+    huge_line = "x" * 5000
+    chunks = _chunk_lines(["short", huge_line, "also short"])
+    assert huge_line in chunks

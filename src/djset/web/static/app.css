@@ -1,221 +1,318 @@
-/* Four panes, the same flow as the desktop window. Dark by default because
-   that is what the Qt build looked like and what a DJ tool tends to be. */
+/* djset — Mixed In Key-flavoured light interface.
+   Camelot colour is the only strong colour in the page: it carries harmonic
+   position, so nothing decorative is allowed to compete with it. */
 
 :root {
-  --bg: #111318;
-  --panel: #181b22;
-  --panel-2: #1e222b;
-  --border: #2a2f3a;
-  --text: #e6e8ee;
-  --muted: #8b93a7;
-  --accent: #2f81f7;
-  --good: #3fb950;
-  --warn: #d29922;
-  --bad: #f85149;
-  --radius: 8px;
+  --bg: #EFF1F5;
+  --panel: #FFFFFF;
+  --panel-2: #F7F8FA;
+  --line: #E2E6ED;
+  --line-soft: #EDF0F5;
+  --ink: #171B23;
+  --ink-2: #5A6474;
+  --ink-3: #8B94A3;
+  --accent: #2F6BFF;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #E8EFFF;
+  --ok: #17A673;
+  --warn: #D9862B;
+  --bad: #D6455B;
+  --radius: 10px;
+  --font: "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, sans-serif;
+  --mono: "Cascadia Mono", "JetBrains Mono", Consolas, ui-monospace, monospace;
 }
 
 * { box-sizing: border-box; }
 
+html, body { height: 100%; }
+
 body {
   margin: 0;
   background: var(--bg);
-  color: var(--text);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-}
-
-header {
-  display: flex;
-  align-items: baseline;
-  gap: 1rem;
-  padding: .6rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-}
-header h1 { font-size: 1rem; margin: 0; letter-spacing: .08em; text-transform: lowercase; }
-
-main {
-  display: grid;
-  grid-template-columns: 260px 240px 260px 1fr;
-  gap: 12px;
-  padding: 12px;
-  height: calc(100vh - 46px);
-}
-@media (max-width: 1100px) {
-  main { grid-template-columns: 1fr 1fr; height: auto; }
-  .pane { max-height: 60vh; }
-}
-@media (max-width: 640px) {
-  main { grid-template-columns: 1fr; }
-}
-
-.pane {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: .75rem;
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.45;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
 }
-.pane h2 { font-size: .8rem; margin: 0 0 .6rem; color: var(--muted); font-weight: 600; }
 
-.scroll { overflow: auto; min-height: 0; flex: 1; }
-.grow-tall { flex: 1; min-height: 200px; }
-
-label { display: block; }
-.check { margin: .25rem 0; color: var(--text); font-size: .86rem; }
-.field { display: flex; flex-direction: column; gap: .2rem; margin: .5rem 0; font-size: .8rem; color: var(--muted); }
-.field.grow { flex: 1; }
-.row { display: flex; gap: .5rem; align-items: flex-end; flex-wrap: wrap; }
-
-fieldset { border: 0; padding: 0; margin: 0 0 .5rem; }
-legend { font-size: .8rem; color: var(--muted); padding: 0; margin-bottom: .2rem; }
-
-input[type="text"], input[type="number"], input[type="search"], select {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 6px;
-  padding: .4rem .5rem;
-  font: inherit;
-  width: 100%;
+h2 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
 }
-input[type="search"] { margin-bottom: .5rem; }
 
-button {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 6px;
-  padding: .45rem .7rem;
-  font: inherit;
-  cursor: pointer;
-}
-button:hover:not(:disabled) { border-color: var(--accent); }
-button:disabled { opacity: .45; cursor: not-allowed; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-button.small { padding: .25rem .5rem; font-size: .8rem; }
-button.toggle { width: 100%; text-align: left; }
-
-.summary { color: var(--muted); font-size: .8rem; margin: .5rem 0 0; }
-.muted { color: var(--muted); }
-.small-print { font-size: .74rem; margin-top: .4rem; }
-
-/* The genre pane must say *why* it is empty rather than just being blank —
-   a filter that looks broken invites the reader to think it blocks Generate. */
-.notice {
-  background: var(--panel-2);
-  border-left: 3px solid var(--warn);
-  padding: .5rem .6rem;
-  font-size: .8rem;
-  border-radius: 0 6px 6px 0;
-  margin: .5rem 0;
-}
-.notice b { display: block; margin-bottom: .25rem; }
-
-.item { display: flex; gap: .4rem; align-items: baseline; padding: .18rem 0; font-size: .84rem; }
-.item input { margin: 0; }
-.item .count { color: var(--muted); font-size: .78rem; margin-left: auto; }
-
-table { width: 100%; border-collapse: collapse; font-size: .84rem; }
-th, td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid var(--border); }
-th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; z-index: 1; }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-tbody tr.dragging { opacity: .4; }
-tbody tr.over { border-top: 2px solid var(--accent); }
-tbody tr { cursor: grab; }
-
-/* Marks a key the analyser measured rather than one a catalogue supplied.
-   Deliberately quiet: it qualifies the value, it is not a warning. */
-.est { color: var(--warn); margin-left: .15rem; cursor: help; font-weight: 600; }
-
-/* Carried at the end because there is no BPM or key to mix on. Dimmed and
-   labelled: present in the playlist, visibly not part of the mix. */
-tbody tr.carried { opacity: .62; }
-tbody tr.carried td.num:first-child { color: var(--muted); }
-.carried-tag { color: var(--muted); font-size: .78rem; font-style: italic; }
-
-.t-excellent { color: var(--good); }
-.t-good { color: var(--good); opacity: .8; }
-.t-fair { color: var(--warn); }
-.t-rough { color: var(--warn); opacity: .85; }
-.t-incompatible { color: var(--bad); font-weight: 600; }
-
-.link { font-size: .8rem; word-break: break-all; margin: .4rem 0 0; }
-.link a { color: var(--accent); }
-
-.drop { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 .3rem; }
-.drop:hover { color: var(--bad); }
-
-#toast {
-  position: fixed;
-  bottom: 1rem;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: .6rem 1rem;
-  font-size: .85rem;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, .5);
-}
-#toast.bad { border-color: var(--bad); color: var(--bad); }
-
-
-/* the job bar: sync and enrich are long, so they get a permanent place
-   rather than a toast that vanishes before the job does */
+.stat { color: var(--ink-2); font-size: 12.5px; }
+.summary { margin: 8px 0 0; color: var(--ink-2); font-size: 12.5px; }
 .spacer { flex: 1; }
+.grow { flex: 1; min-height: 0; }
 
-#job {
-  padding: .5rem 1rem;
-  background: var(--panel-2);
-  border-bottom: 1px solid var(--border);
+/* ---------- top bar ---------- */
+
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  flex: none;
 }
-.job-line { display: flex; align-items: center; gap: .6rem; font-size: .82rem; }
-.job-line strong { text-transform: capitalize; }
-#job-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46vw; }
 
-.bar { height: 4px; background: var(--border); border-radius: 2px; margin-top: .4rem; overflow: hidden; }
-#job-bar { height: 100%; width: 0; background: var(--accent); transition: width .3s ease; }
-#job.done #job-bar { background: var(--good); }
-#job.failed #job-bar { background: var(--bad); }
-
-/* No total yet: sync counts lines, and enrich has not finished working out
-   how many tracks are pending. A full bar would read as finished. */
-#job.indeterminate #job-bar {
-  background: linear-gradient(90deg,
-    var(--border) 0%, var(--accent) 50%, var(--border) 100%);
-  background-size: 200% 100%;
-  animation: sweep 1.4s linear infinite;
+.brand { display: flex; align-items: center; gap: 9px; }
+.mark {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, #FFF 0 4px, var(--accent) 5px 100%);
+  box-shadow: 0 0 0 1px #1B54D6 inset;
 }
-@keyframes sweep { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.wordmark { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
 
-/* the auth chip in the header */
-a.button {
-  display: inline-block;
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  color: #fff;
-  border-radius: 6px;
-  padding: .25rem .6rem;
-  font-size: .8rem;
+/* ---------- buttons ---------- */
+
+button, .button {
+  font: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 7px 13px;
+  cursor: pointer;
   text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 120ms, border-color 120ms, color 120ms;
+}
+button:hover:not(:disabled), .button:hover { background: var(--panel-2); border-color: #CFD6E2; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.small { padding: 5px 10px; font-size: 12.5px; }
+.ghost { background: var(--panel); color: var(--ink-2); }
+.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
   font-weight: 600;
 }
-a.button:hover { filter: brightness(1.1); }
-#auth-state.bad { color: var(--warn); }
+.primary:hover:not(:disabled) { background: #1F58E0; border-color: #1F58E0; }
 
-#target-hint { color: var(--warn); }
-#target-hint button {
-  padding: .15rem .45rem;
-  font-size: .76rem;
-  margin-left: .35rem;
+/* ---------- job strip ---------- */
+
+#job {
+  padding: 8px 16px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.job-line { display: flex; align-items: center; gap: 10px; }
+.bar { height: 4px; border-radius: 2px; background: #D5E0F8; margin-top: 7px; overflow: hidden; }
+#job-bar { height: 100%; width: 0; background: var(--accent); border-radius: 2px; transition: width 200ms; }
+
+/* ---------- layout ---------- */
+
+#shell {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 292px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
 }
 
-#breakdown { margin-top: .35rem; }
-#breakdown summary { cursor: pointer; }
-#breakdown ul { margin: .35rem 0 0; padding-left: 1.1rem; }
-#breakdown li { font-size: .78rem; color: var(--muted); margin: .12rem 0; }
-#breakdown li b { color: var(--text); font-variant-numeric: tabular-nums; }
+#rail, #content {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 13px 14px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- camelot wheel ---------- */
+
+.wheel-card { flex: none; align-items: stretch; }
+#wheel { width: 100%; max-width: 236px; height: auto; margin: 0 auto; display: block; }
+.seg-lab { font-family: var(--mono); font-size: 9.5px; pointer-events: none; font-weight: 600; }
+#wheel-note { text-align: center; margin: 8px 0 0; }
+
+/* ---------- sources ---------- */
+
+.row { display: flex; gap: 8px; align-items: center; }
+.row.tight { gap: 6px; }
+
+input[type="search"], input[type="text"], input[type="number"], select {
+  font: inherit;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--ink);
+  min-width: 0;
+}
+input:focus, select:focus, button:focus-visible, .button:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+input[type="number"] { width: 78px; }
+
+.scroll {
+  overflow-y: auto;
+  margin-top: 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel-2);
+  flex: 1;
+  min-height: 120px;
+}
+.scroll.short { max-height: 150px; flex: none; }
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  cursor: pointer;
+  font-size: 13px;
+}
+.item:last-child { border-bottom: 0; }
+.item:hover { background: #EEF2FA; }
+.item span:first-of-type { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .count {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
+
+/* ---------- toolbar ---------- */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 18px;
+  align-items: flex-end;
+}
+.tool { display: flex; flex-direction: column; gap: 5px; }
+.tool.grow { flex: 1; min-width: 190px; }
+.tool.act { margin-left: auto; }
+.lbl {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.check { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
+
+.segmented { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.segmented label { position: relative; }
+.segmented input { position: absolute; opacity: 0; pointer-events: none; }
+.segmented span {
+  display: block;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  white-space: nowrap;
+}
+.segmented label:last-child span { border-right: 0; }
+.segmented input:checked + span { background: var(--accent); color: #fff; font-weight: 600; }
+
+#pane-genres { margin-top: 12px; border-top: 1px solid var(--line-soft); padding-top: 10px; }
+#pane-genres summary { cursor: pointer; font-size: 12.5px; color: var(--ink-2); }
+.notice {
+  margin: 8px 0 0; padding: 8px 10px;
+  background: #FFF6E8; border: 1px solid #F0DCBA; border-radius: 7px;
+  font-size: 12.5px; color: #7A5417;
+}
+
+/* ---------- result ---------- */
+
+.result-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.result-head h2 { margin: 0; }
+.link { margin: 8px 0 0; font-size: 12.5px; word-break: break-all; }
+.link a { color: var(--accent); }
+
+.table-wrap { background: var(--panel); }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--panel-2);
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--line);
+}
+tbody td { padding: 7px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+tbody tr:hover { background: #F4F7FD; }
+.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+th.num { text-align: right; }
+
+/* Camelot chip — the colour is the information. */
+.keychip {
+  display: inline-block;
+  min-width: 42px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  color: #14181F;
+  letter-spacing: .02em;
+}
+
+.carried-tag {
+  font-size: 11px; padding: 2px 7px; border-radius: 999px;
+  background: #F0F2F6; color: var(--ink-3);
+}
+.drop {
+  border: 0; background: none; color: var(--ink-3);
+  padding: 2px 6px; border-radius: 6px; font-size: 13px;
+}
+.drop:hover { background: #FBE7EA; color: var(--bad); }
+
+tr.dragging { opacity: .45; }
+tr.over { box-shadow: inset 0 2px 0 var(--accent); }
+
+/* ---------- toast ---------- */
+
+#toast {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  background: #1B2029; color: #fff;
+  padding: 10px 16px; border-radius: 9px;
+  font-size: 13px; max-width: 78vw; z-index: 50;
+  box-shadow: 0 10px 30px -10px rgba(0,0,0,.5);
+}
+#toast.bad { background: var(--bad); }
+
+@media (max-width: 900px) {
+  #shell { grid-template-columns: 1fr; }
+  .tool.act { margin-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

@@ -8,137 +8,164 @@
 </head>
 <body>
 
-<header>
-  <h1>djset</h1>
-  <div id="health" class="muted">loading…</div>
+<header id="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <span class="wordmark">djset</span>
+  </div>
+  <div id="health" class="stat">loading…</div>
   <div class="spacer"></div>
-  <span id="auth-state" class="muted"></span>
-  <a id="auth-login" class="button small" href="/auth/login" hidden>Connect Spotify</a>
-  <button id="auth-logout" class="small" hidden>Disconnect</button>
-  <button id="do-sync" class="small">Sync library</button>
-  <button id="do-enrich" class="small">Enrich BPM/key</button>
+  <span id="auth-state" class="stat"></span>
+  <a id="auth-login" class="button primary small" href="/auth/login" hidden>Connect Spotify</a>
+  <button id="auth-logout" class="small ghost" hidden>Disconnect</button>
+  <button id="do-sync" class="small ghost">Sync library</button>
+  <button id="do-enrich" class="small ghost">Enrich BPM/key</button>
 </header>
 
 <div id="job" hidden>
   <div class="job-line">
     <strong id="job-kind"></strong>
-    <span id="job-label" class="muted"></span>
+    <span id="job-label" class="stat"></span>
     <span class="spacer"></span>
-    <span id="job-eta" class="muted"></span>
-    <button id="job-cancel" class="small">Cancel</button>
+    <span id="job-eta" class="stat"></span>
+    <button id="job-cancel" class="small ghost">Cancel</button>
   </div>
   <div class="bar"><div id="job-bar"></div></div>
 </div>
 
-<main>
-  <!-- 1 -->
-  <section class="pane" id="pane-sources">
-    <h2>1 · Sources</h2>
-    <div class="row">
-      <label class="field grow">Filter
-        <input type="search" id="source-filter" placeholder="Filter playlists…" autocomplete="off">
-      </label>
-      <label class="field">Sort by
-        <select id="source-sort">
+<main id="shell">
+
+  <!-- ============ LEFT RAIL ============ -->
+  <aside id="rail">
+
+    <section class="card wheel-card">
+      <h2>Camelot Wheel</h2>
+      <svg id="wheel" viewBox="0 0 260 260" role="img"
+           aria-label="Camelot wheel highlighting the keys in the current set"></svg>
+      <p id="wheel-note" class="stat"></p>
+    </section>
+
+    <section class="card grow" id="pane-sources">
+      <h2>Playlists</h2>
+      <div class="row">
+        <input type="search" id="source-filter" class="grow" placeholder="Filter playlists…" autocomplete="off">
+        <select id="source-sort" aria-label="Sort playlists">
           <option value="name">name</option>
           <option value="tracks-desc">most tracks</option>
           <option value="tracks-asc">fewest tracks</option>
         </select>
-      </label>
-    </div>
-    <div id="sources" class="scroll" role="group" aria-label="Playlists"></div>
-    <p id="sources-summary" class="summary">No source selected</p>
-  </section>
-
-  <!-- 2 -->
-  <section class="pane" id="pane-genres">
-    <h2>2 · Genre filter <span class="muted">(optional)</span></h2>
-    <button id="genre-toggle" class="toggle" aria-expanded="false">Show genres ▸</button>
-    <div id="genre-body" hidden>
-      <div class="row">
-        <button id="genre-all" class="small">Select all</button>
-        <button id="genre-none" class="small">Clear</button>
       </div>
-      <p id="genre-notice" class="notice" hidden></p>
-      <div id="genres" class="scroll" role="group" aria-label="Genres"></div>
-    </div>
-    <p id="eligible" class="summary">—</p>
-    <details id="breakdown" hidden>
-      <summary class="summary">Where the rest went</summary>
-      <ul id="breakdown-list"></ul>
-    </details>
-  </section>
+      <div id="sources" class="scroll" role="group" aria-label="Playlists"></div>
+      <p id="sources-summary" class="summary">No source selected</p>
+    </section>
 
-  <!-- 3 -->
-  <section class="pane" id="pane-generate">
-    <h2>3 · Generate</h2>
+  </aside>
 
-    <fieldset>
-      <legend>Sequence by</legend>
-      <label><input type="radio" name="mode" value="bpm"> BPM</label>
-      <label><input type="radio" name="mode" value="key"> Key</label>
-      <label><input type="radio" name="mode" value="bpm+key" checked> BPM + Key</label>
-    </fieldset>
+  <!-- ============ MAIN ============ -->
+  <div id="content">
 
-    <label class="field">BPM tolerance
-      <input type="number" id="tolerance" min="0.02" max="0.12" step="0.01" value="0.06">
-    </label>
+    <section class="card" id="pane-generate">
+      <div class="toolbar">
 
-    <label class="check"><input type="checkbox" id="half-double" checked>
-      Match half/double time (70 ↔ 140)</label>
-    <label class="check"><input type="checkbox" id="energy-boost">
-      Allow energy-boost transitions (+7)</label>
+        <div class="tool">
+          <span class="lbl">Sequence by</span>
+          <div class="segmented">
+            <label><input type="radio" name="mode" value="bpm"><span>BPM</span></label>
+            <label><input type="radio" name="mode" value="key"><span>Key</span></label>
+            <label><input type="radio" name="mode" value="bpm+key" checked><span>BPM + Key</span></label>
+          </div>
+        </div>
 
-    <div class="row">
-      <label class="field grow">Target
-        <input type="number" id="target-value" min="1" value="20">
-      </label>
-      <label class="field grow">&nbsp;
-        <select id="target-kind">
-          <option value="tracks">tracks</option>
-          <option value="minutes">minutes</option>
-          <option value="all">whole selection</option>
-        </select>
-      </label>
-    </div>
+        <div class="tool">
+          <span class="lbl">Target</span>
+          <div class="row tight">
+            <input type="number" id="target-value" min="1" value="20">
+            <select id="target-kind">
+              <option value="tracks">tracks</option>
+              <option value="minutes">minutes</option>
+              <option value="all" selected>whole selection</option>
+            </select>
+          </div>
+        </div>
 
-    <p id="target-hint" class="summary" hidden></p>
+        <div class="tool">
+          <span class="lbl">BPM tolerance</span>
+          <input type="number" id="tolerance" min="0.02" max="0.12" step="0.01" value="0.06">
+        </div>
 
-    <label class="field">Playlist name
-      <input type="text" id="playlist-name" placeholder="BPM+KEY · 20 tracks">
-    </label>
-    <label class="check"><input type="checkbox" id="public"> Make public</label>
+        <div class="tool wide">
+          <span class="lbl">Rules</span>
+          <label class="check"><input type="checkbox" id="half-double" checked>
+            Half / double time</label>
+          <label class="check"><input type="checkbox" id="energy-boost">
+            Energy boost (+7)</label>
+          <label class="check" title="One energy level at a time, the way Mixed In Key teaches it"><input type="checkbox" id="energy-arc">
+            Build energy arc</label>
+        </div>
 
-    <button id="generate" class="primary" disabled>Generate set</button>
-    <p class="muted small-print">Sequences only. Saving to Spotify is the next step.</p>
-  </section>
+        <div class="tool grow">
+          <span class="lbl">Playlist name</span>
+          <input type="text" id="playlist-name" placeholder="mixed in key">
+          <label class="check"><input type="checkbox" id="public"> Make public</label>
+        </div>
 
-  <!-- 4 -->
-  <section class="pane wide" id="pane-result">
-    <h2>4 · Result</h2>
-    <p id="result-status" class="summary">No set generated yet.</p>
-    <div class="row">
-      <button id="save" class="primary" disabled>Save to Spotify</button>
-      <button id="copy" disabled>Copy link</button>
-      <button id="open" disabled>Open in Spotify</button>
-      <button id="update" disabled>Update playlist</button>
-    </div>
-    <p id="link" class="link"></p>
-    <div class="scroll grow-tall">
-      <table id="result">
-        <thead><tr>
-          <th>#</th><th>Title</th><th>Artist</th>
-          <th class="num">BPM</th><th class="num">Key</th><th>Transition</th><th></th>
-        </tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <p id="result-summary" class="summary"></p>
-  </section>
+        <div class="tool act">
+          <button id="generate" class="primary" disabled>Generate set</button>
+        </div>
+      </div>
+
+      <p id="target-hint" class="summary" hidden></p>
+
+      <details id="pane-genres">
+        <summary id="genre-toggle" aria-expanded="false">Genre filter (optional)</summary>
+        <div id="genre-body">
+          <div class="row">
+            <button id="genre-all" class="small ghost">Select all</button>
+            <button id="genre-none" class="small ghost">Clear</button>
+          </div>
+          <p id="genre-notice" class="notice" hidden></p>
+          <div id="genres" class="scroll short" role="group" aria-label="Genres"></div>
+        </div>
+      </details>
+
+      <p id="eligible" class="summary">—</p>
+      <details id="breakdown" hidden>
+        <summary class="summary">Where the rest went</summary>
+        <ul id="breakdown-list"></ul>
+      </details>
+    </section>
+
+    <section class="card grow" id="pane-result">
+      <div class="result-head">
+        <h2>Set</h2>
+        <p id="result-status" class="stat">No set generated yet.</p>
+        <span class="spacer"></span>
+        <button id="save" class="primary" disabled>Save to Spotify</button>
+        <button id="reshuffle" class="ghost" disabled title="Same songs, a different harmonic order">Another order (v2)</button>
+        <button id="copy" class="ghost" disabled>Copy link</button>
+        <button id="open" class="ghost" disabled>Open in Spotify</button>
+        <button id="update" class="ghost" disabled>Update playlist</button>
+      </div>
+      <p id="link" class="link"></p>
+
+      <div class="scroll table-wrap">
+        <table id="result">
+          <thead><tr>
+            <th class="num">#</th><th>Title</th><th>Artist</th>
+            <th class="num">Tempo</th><th class="num">Key</th><th>Transition</th><th></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p id="result-summary" class="summary"></p>
+    </section>
+
+  </div>
 </main>
 
 <div id="toast" role="status" aria-live="polite" hidden></div>
 
 <script src="/static/app.js"></script>
+<script src="/static/wheel.js"></script>
 </body>
 </html>

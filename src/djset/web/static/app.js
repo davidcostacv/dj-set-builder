@@ -234,13 +234,22 @@ function refreshTargetHint() {
   });
 }
 
+function sourceName() {
+  const names = state.sources.filter((s) => state.selected.has(s.id)).map((s) => s.name.trim());
+  if (names.length === 1) return names[0];
+  if (names.length > 1) return `${names.length} playlists`;
+  return "djset";
+}
+
+// Named after where it came from, the way Mixed In Key names what it exports.
+// The suffix is the point: these playlists are findable by searching "mixed in
+// key" in Spotify, which is how you tell them from the source they copy.
+function mixName(suffix = "") {
+  return `${sourceName()} mixed in key${suffix}`;
+}
+
 function refreshName() {
-  const mode = document.querySelector('input[name=mode]:checked').value.toUpperCase();
-  const kind = $("target-kind").value;
-  const n = $("target-value").value;
-  const tail = kind === "all" ? "whole selection" : `${n} ${kind}`;
-  const genres = state.genres.size ? [...state.genres].join(" / ") + " · " : "";
-  $("playlist-name").placeholder = `${genres}${mode} · ${tail}`;
+  $("playlist-name").placeholder = mixName();
 }
 
 // ---------------------------------------------------------------------------
@@ -332,6 +341,7 @@ async function generate() {
       tolerance: Number($("tolerance").value),
       half_double: $("half-double").checked,
       energy_boost: $("energy-boost").checked,
+      energy_arc: $("energy-arc").checked,
       // Held with the rest: ticking a different playlist after generating
       // must not change what the saved set says it was drawn from.
       sources: [...state.selected],
@@ -367,6 +377,7 @@ async function generate() {
       ? "Set ready. Nothing has been written to Spotify yet."
       : shortSetMessage(data);
     $("save").disabled = data.count === 0;
+    $("reshuffle").disabled = data.count === 0;
     $("copy").disabled = $("open").disabled = $("update").disabled = true;
     $("link").innerHTML = "";
   } catch (err) {
@@ -389,13 +400,17 @@ function shortSetMessage(data) {
   return text;
 }
 
-async function save() {
+async function save(suffix = "") {
   const btn = $("save");
   btn.disabled = true;
   btn.textContent = "Saving…";
   try {
     const data = await api("/api/export", {
-      name: $("playlist-name").value.trim() || $("playlist-name").placeholder,
+      // A re-mix is named off the source, not off the first playlist's name:
+      // "… mixed in key v2 mixed" reads like a mistake.
+      name: suffix
+        ? `${sourceName()} ${suffix}`
+        : ($("playlist-name").value.trim() || $("playlist-name").placeholder),
       uris: state.set.map((t) => t.uri),
       // What produced this order, plus whether it was touched afterwards. The
       // server turns these into the description; the page does not phrase it.
@@ -639,15 +654,83 @@ $("genre-all").addEventListener("click", async () => {
 });
 $("genre-none").addEventListener("click", () => { state.genres.clear(); refreshSelection(); });
 $("generate").addEventListener("click", generate);
-$("save").addEventListener("click", save);
+
+// Re-sequence exactly the tracks already on screen from a different entry
+// point. The engine is a path search, so a different start yields a genuinely
+// different order that still satisfies every harmonic rule — not a shuffle.
+async function reshuffle() {
+  if (!state.set.length) return;
+  const btn = $("reshuffle");
+  btn.disabled = true;
+  const was = btn.textContent;
+  btn.textContent = "Re-mixing…";
+  try {
+    const ids = state.set.map((t) => t.id);
+    const previous = ids.join("|");
+    const built = { ...(state.builtWith || {}) };
+
+    // Try a few entry points rather than one: with a small set some starts
+    // reproduce the order we already have, and handing back an identical
+    // "new" order would be a lie.
+    let data = null;
+    for (const i of shuffledIndexes(ids.length)) {
+      const attempt = await api("/api/generate", {
+        ...selection(),
+        ...built,
+        picked: ids,
+        target_kind: "all",
+        target_value: 1,
+        start_track_id: ids[i],
+      });
+      if (attempt.tracks.map((t) => t.id).join("|") !== previous) { data = attempt; break; }
+      data = attempt;
+    }
+
+    state.set = data.tracks;
+    state.playlistId = null;
+    state.dirty = false;
+    renderSet(state.set);
+    $("save").disabled = false;
+    $("copy").disabled = $("open").disabled = $("update").disabled = true;
+    $("link").textContent = "";
+    $("result-status").textContent =
+      `Same ${state.set.length} tracks, a different harmonic order.`;
+    await save("v2 mixed");
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.textContent = was;
+    btn.disabled = state.set.length === 0;
+  }
+}
+
+// Entry points in random order, so pressing v2 twice does not walk the same
+// path both times.
+function shuffledIndexes(n) {
+  const a = [...Array(n).keys()];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a.slice(0, Math.min(6, n));
+}
+
+$("reshuffle").addEventListener("click", reshuffle);
+
+$("save").addEventListener("click", () => save());
 $("update").addEventListener("click", update);
 $("copy").addEventListener("click", async () => {
   await navigator.clipboard.writeText($("link").textContent);
   toast("Link copied");
 });
 $("open").addEventListener("click", () => window.open($("link").textContent, "_blank"));
+function syncTargetInput() {
+  $("target-value").disabled = $("target-kind").value === "all";
+}
+syncTargetInput();
+
 for (const el of ["target-kind", "target-value", "tolerance"]) {
-  $(el).addEventListener("change", () => { refreshName(); refreshTargetHint(); });
+  $(el).addEventListener("change", () => { syncTargetInput(); refreshName(); refreshTargetHint(); });
 }
 $("target-value").addEventListener("input", refreshTargetHint);
 document.querySelectorAll('input[name=mode]').forEach((r) =>

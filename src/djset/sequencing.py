@@ -36,6 +36,11 @@ MIN_TOLERANCE = 0.02
 ENERGY_DIP = 0.02
 MAX_TOLERANCE = 0.12
 
+# How much of a transition's score the arc is allowed to decide. Small on
+# purpose: BPM and key make a join possible, energy only decides where in the
+# night it belongs.
+ENERGY_WEIGHT = 0.25
+
 
 class SequenceMode(str, Enum):
     """Which predicates are active. One code path, three flags."""
@@ -117,6 +122,11 @@ class SequenceOptions:
     tolerance: float = DEFAULT_TOLERANCE
     half_double: bool = True
     energy_boost: bool = False
+    # Shape the set as a climb rather than only a legal path, the way Mixed In
+    # Key tells DJs to build one. Off by default: on this library only 41% of
+    # tracks carry an energy reading, and measured against real playlists the
+    # arc helped one and hurt another, so it is offered rather than imposed.
+    energy_arc: bool = False
     target_tracks: int | None = None
     target_minutes: float | None = None
     # Reorder everything that is eligible, rather than picking a fixed count.
@@ -127,6 +137,37 @@ class SequenceOptions:
 
     def clamped_tolerance(self) -> float:
         return max(MIN_TOLERANCE, min(MAX_TOLERANCE, self.tolerance))
+
+
+def energy_target(position: int, length: int) -> float:
+    """Where on the climb the slot at ``position`` of ``length`` should sit.
+
+    A straight ramp from the quiet end of the pool to the loud end. Energy is
+    already a within-pool percentile by the time it gets here, so 0 is the
+    calmest track available and 1 the hardest — the ramp spans whatever range
+    this particular selection actually has.
+    """
+    if length <= 1:
+        return 1.0
+    return position / (length - 1)
+
+
+def energy_fit(energy: float | None, position: int, length: int) -> float:
+    """How well a track suits that slot: +1 dead on the ramp, -1 at the far end.
+
+    Judged against the *position*, not against the previous track. Rewarding a
+    one-level step was the earlier mistake and it backfired: the search chained
+    gentle little rises, never reached the loud end, and finished sets lower
+    than with the rule switched off. Scoring the slot keeps the whole climb in
+    view — putting a peak track third costs exactly as much as ending on a
+    quiet one.
+
+    Unknown energy scores zero: neither chased nor avoided, so the half of a
+    library with no reading does not distort the order.
+    """
+    if energy is None:
+        return 0.0
+    return 1.0 - 2.0 * abs(energy - energy_target(position, length))
 
 
 def transition(
@@ -480,7 +521,12 @@ def build_set(
     best: _Beam | None = None
 
     for start in starts:
-        beams = [_Beam(path=[start], used={start}, score=0.0, dips=0)]
+        seed_score = (
+            ENERGY_WEIGHT * energy_fit(graph.feat[start].energy, 0, target)
+            if opts.energy_arc
+            else 0.0
+        )
+        beams = [_Beam(path=[start], used={start}, score=seed_score, dips=0)]
         while beams:
             if best is None or len(beams[0].path) > len(best.path):
                 best = max(beams, key=lambda b: (len(b.path), b.score))
@@ -505,11 +551,20 @@ def build_set(
                         if beam.dips >= 1 or not in_back_third:
                             continue
                         dips += 1
+                    # Quality says the join works; the arc says it belongs
+                    # here rather than somewhere else in the night. Kept out of
+                    # `quality` so the number shown against the row stays a
+                    # statement about BPM and key alone.
+                    step = tr.quality
+                    if opts.energy_arc:
+                        step += ENERGY_WEIGHT * energy_fit(
+                            graph.feat[j].energy, len(beam.path), target
+                        )
                     nxt.append(
                         _Beam(
                             path=[*beam.path, j],
                             used={*beam.used, j},
-                            score=beam.score + tr.quality,
+                            score=beam.score + step,
                             dips=dips,
                         )
                     )

@@ -156,6 +156,9 @@ class GenerateIn(SelectionIn):
     tolerance: float = Field(DEFAULT_TOLERANCE, ge=MIN_TOLERANCE, le=MAX_TOLERANCE)
     half_double: bool = True
     energy_boost: bool = False
+    # Shape the set as a climb, the way Mixed In Key tells DJs to: one energy
+    # level at a time, never skipping one.
+    energy_arc: bool = False
     target_kind: Literal["tracks", "minutes", "all"] = "tracks"
     target_value: int = Field(20, ge=1, le=10_000)
     start_track_id: str | None = None
@@ -359,6 +362,7 @@ def generate(body: GenerateIn) -> dict[str, Any]:
         tolerance=body.tolerance,
         half_double=body.half_double,
         energy_boost=body.energy_boost,
+        energy_arc=body.energy_arc,
         use_all=body.target_kind == "all",
         target_tracks=body.target_value if body.target_kind == "tracks" else None,
         target_minutes=float(body.target_value) if body.target_kind == "minutes" else None,

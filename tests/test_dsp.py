@@ -128,7 +128,7 @@ def test_undecodable_audio_is_a_clean_miss():
 
 def test_a_result_is_labelled_as_measured_not_verified(monkeypatch):
     src = Fake(url="http://x/p.mp3", audio=b"x" * 20_000)
-    monkeypatch.setattr("djset.enrichment.dsp.analyse", lambda b: (128.0, "8A", 0.2))
+    monkeypatch.setattr("djset.enrichment.dsp.analyse", lambda b: (128.0, "8A", 0.2, 0.55))
 
     f = src.lookup(T())
     assert f.source == "dsp"
@@ -139,7 +139,7 @@ def test_a_result_is_labelled_as_measured_not_verified(monkeypatch):
 
 def test_a_dropped_key_still_returns_the_tempo(monkeypatch):
     src = Fake(url="http://x/p.mp3", audio=b"x" * 20_000)
-    monkeypatch.setattr("djset.enrichment.dsp.analyse", lambda b: (128.0, None, 0.01))
+    monkeypatch.setattr("djset.enrichment.dsp.analyse", lambda b: (128.0, None, 0.01, 0.55))
 
     f = src.lookup(T())
     assert f.bpm == 128.0
@@ -209,7 +209,7 @@ def test_it_answers_where_the_catalogues_are_silent(monkeypatch):
             return None
 
     src = Fake(url="http://x/p.mp3", audio=b"x" * 20_000)
-    monkeypatch.setattr("djset.enrichment.dsp.analyse", lambda b: (117.5, "4A", 0.2))
+    monkeypatch.setattr("djset.enrichment.dsp.analyse", lambda b: (117.5, "4A", 0.2, 0.55))
 
     resolver = Resolver(
         [Silent("getsongbpm", 20), Silent("acousticbrainz", 25), Silent("deezer", 30), src]

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from .. import db
 from ..models import AudioFeatures, Track
-from .base import Resolver, merged_with_key
+from .base import MANUAL_SOURCE, Resolver, merged_with_energy, merged_with_key
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +29,12 @@ class EnrichmentStats:
     resolved: int = 0
     written: int = 0
     keys_merged: int = 0
+    energy_merged: int = 0
+    # Wanted energy, but no source enabled for this run could supply it: the
+    # row's own source is off and nothing enabled outranks it. Skipped before
+    # the lookup rather than after, so a --dsp pass stops downloading and
+    # analysing Deezer rows only to throw the answer away.
+    skipped_unfillable: int = 0
     # Resolved, then written nowhere because a source with more standing was
     # already on file. Counted because `resolved` alone hid the fact that a
     # whole --refresh pass could compute thousands of answers and store none.
@@ -61,6 +67,26 @@ def _would_lose_the_key(
     )
 
 
+def _energy_fillable(resolver: Resolver, row: AudioFeatures) -> bool:
+    """Whether any source enabled for this run could put energy on ``row``.
+
+    Two ways in, mirroring the write path: a source with the *same name* can
+    merge energy into the row (see `merged_with_energy`), and a source that
+    *outranks* the row can replace it wholesale. Anything else resolves only to
+    be discarded — the cost this exists to avoid is a full download and audio
+    analysis per row for an answer nobody will keep.
+    """
+    if row.source == MANUAL_SOURCE:
+        return False                     # a hand-typed row is never amended
+    row_priority = resolver.priority_of(row.source)
+    for source in resolver.sources:
+        if source.name == row.source:
+            return True
+        if row_priority is not None and source.priority < row_priority:
+            return True
+    return False
+
+
 def enrich_tracks(
     conn: sqlite3.Connection,
     resolver: Resolver,
@@ -72,6 +98,7 @@ def enrich_tracks(
     refresh: bool = False,
     retry_misses: bool = False,
     retry_incomplete: bool = False,
+    retry_energy: bool = False,
 ) -> EnrichmentStats:
     """Resolve features for tracks that do not have them yet.
 
@@ -94,6 +121,13 @@ def enrich_tracks(
     usually comes from a source with less standing than the one already on
     file. Cheaper than ``refresh`` by the whole complete majority of a library.
 
+    ``retry_energy`` re-attempts rows that are perfectly sequenceable but carry
+    no energy. They are not incomplete by the old definition — BPM and key are
+    both there — yet without energy they cannot take part in the energy arc, and
+    the dsp source analysed thousands of them before it measured energy at all.
+    A third population again, and the cheapest way to fill it without asking the
+    catalogues to re-confirm answers already on file.
+
     ``refresh`` re-attempts *everything*, cached hits included. Only useful
     when an existing source's data is itself suspect.
     """
@@ -103,7 +137,7 @@ def enrich_tracks(
     cached = db.all_features(conn)
     exhausted = (
         set()
-        if (refresh or retry_misses or retry_incomplete)
+        if (refresh or retry_misses or retry_incomplete or retry_energy)
         else db.exhausted_ids(conn)
     )
 
@@ -111,9 +145,15 @@ def enrich_tracks(
     for t in items:
         on_file = cached.get(t.spotify_id)
         incomplete = on_file is not None and not on_file.is_usable
+        no_energy = on_file is not None and on_file.energy is None
         if not refresh and on_file is not None:
-            if not (retry_incomplete and incomplete):
+            retry_for_key = retry_incomplete and incomplete
+            retry_for_energy = retry_energy and no_energy
+            if not (retry_for_key or retry_for_energy):
                 stats.already_cached += 1
+                continue
+            if retry_for_energy and not retry_for_key and not _energy_fillable(resolver, on_file):
+                stats.skipped_unfillable += 1
                 continue
         if t.spotify_id in exhausted:
             stats.skipped_exhausted += 1
@@ -146,9 +186,16 @@ def enrich_tracks(
                 # standing on tempo. Filling a gap is not overruling anyone.
                 merged = merged_with_key(existing, features)
                 if merged is not None:
+                    stats.keys_merged += 1
+                # On top of the key, not instead of it: one DSP pass can be
+                # the only thing that has either for a given row.
+                with_energy = merged_with_energy(merged or existing, features)
+                if with_energy is not None:
+                    merged = with_energy
+                    stats.energy_merged += 1
+                if merged is not None:
                     db.upsert_features(conn, merged)
                     cached[track.spotify_id] = merged
-                    stats.keys_merged += 1
                 else:
                     stats.discarded += 1
             db.clear_miss(conn, track.spotify_id)

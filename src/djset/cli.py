@@ -166,6 +166,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
                 refresh=args.refresh,
                 retry_misses=args.retry_misses,
                 retry_incomplete=args.retry_incomplete,
+                retry_energy=args.retry_energy,
             )
         except KeyboardInterrupt:
             conn.commit()
@@ -176,6 +177,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
             f"\nconsidered={stats.considered} cached={stats.already_cached} "
             f"resolved={stats.resolved} missed={stats.missed} "
             f"skipped(retry limit)={stats.skipped_exhausted}"
+            f" skipped(no enabled source can add energy)={stats.skipped_unfillable}"
         )
         # What a resolved answer actually did. Without this a --refresh
         # pass reported thousands resolved while storing none of them,
@@ -183,6 +185,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         print(
             f"  of the {stats.resolved} resolved: {stats.written} written, "
             f"{stats.keys_merged} contributed a key to an existing row, "
+            f"{stats.energy_merged} contributed energy to an existing row, "
             f"{stats.discarded} discarded (higher-trust source on file)"
         )
         print(f"\n{ATTRIBUTION_TEXT}")
@@ -762,6 +765,12 @@ def _add_enrich_args(sp: argparse.ArgumentParser) -> None:
         help="re-attempt rows that have a BPM but no key, keeping everything "
         "already sequenceable — the flag to use when a source that supplies "
         "keys was added after the rest of the library was built",
+    )
+    sp.add_argument(
+        "--retry-energy",
+        action="store_true",
+        help="re-attempt rows that have BPM and key but no energy — the flag "
+             "to use after the dsp analyser learned to measure it",
     )
     sp.add_argument("--no-deezer", action="store_true", help="disable the Deezer source")
     sp.add_argument(

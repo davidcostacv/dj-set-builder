@@ -11,7 +11,7 @@ from djset import db
 from djset.enrichment.base import (
     MANUAL_SOURCE,
     Resolver,
-    merged_with_key,
+    merged_with_energy, merged_with_key,
     set_manual_features,
 )
 from djset.enrichment.runner import enrich_tracks
@@ -311,3 +311,93 @@ def test_the_analyser_and_the_flag_cannot_drift_apart():
     from djset.models import MEASURED_SOURCE
 
     assert DSPSource.name == MEASURED_SOURCE
+
+
+# ---------------------------------------------------------------------------
+# merged_with_energy
+# ---------------------------------------------------------------------------
+
+
+def test_a_dsp_row_takes_energy_from_a_later_dsp_pass():
+    """The case it exists for: analysed before energy was measured."""
+    existing = AudioFeatures(spotify_id="t1", bpm=124.0, key_camelot="8A", source="dsp")
+    candidate = AudioFeatures(spotify_id="t1", bpm=123.0, key_camelot="9A", energy=0.6, source="dsp")
+    merged = merged_with_energy(existing, candidate)
+    assert merged is not None
+    assert merged.energy == 0.6
+    assert (merged.bpm, merged.key_camelot) == (124.0, "8A")   # nothing else moves
+
+
+def test_energy_is_never_replaced():
+    existing = AudioFeatures(spotify_id="t1", bpm=124.0, key_camelot="8A", energy=0.3, source="dsp")
+    candidate = AudioFeatures(spotify_id="t1", bpm=124.0, key_camelot="8A", energy=0.9, source="dsp")
+    assert merged_with_energy(existing, candidate) is None
+
+
+def test_energy_does_not_cross_sources():
+    """Ranked per source, so another source's scale would read as a jump."""
+    existing = AudioFeatures(spotify_id="t1", bpm=124.0, key_camelot="8A", source="acousticbrainz")
+    candidate = AudioFeatures(spotify_id="t1", bpm=124.0, key_camelot="8A", energy=0.6, source="dsp")
+    assert merged_with_energy(existing, candidate) is None
+
+
+def test_a_hand_typed_row_gets_no_energy():
+    manual = AudioFeatures(spotify_id="t1", bpm=124.0, key_camelot="8A", source=MANUAL_SOURCE)
+    candidate = AudioFeatures(spotify_id="t1", bpm=124.0, key_camelot="8A", energy=0.6, source=MANUAL_SOURCE)
+    assert merged_with_energy(manual, candidate) is None
+
+
+def test_no_row_means_no_energy_merge():
+    candidate = AudioFeatures(spotify_id="t1", bpm=124.0, key_camelot="8A", energy=0.6, source="dsp")
+    assert merged_with_energy(None, candidate) is None
+
+
+# ---------------------------------------------------------------------------
+# --retry-energy skips rows no enabled source can fill
+# ---------------------------------------------------------------------------
+
+
+def _seed_without_energy(conn, track_factory, sources):
+    tracks = []
+    for n, source in enumerate(sources, 1):
+        t = track_factory(n)
+        db.upsert_track(conn, t)
+        db.upsert_features(conn, AudioFeatures(
+            spotify_id=t.spotify_id, bpm=120.0, key_camelot="8A", source=source))
+        tracks.append(t)
+    return tracks
+
+
+def test_a_dsp_only_energy_pass_never_touches_rows_it_cannot_fill(conn, track_factory):
+    """A Deezer or AcousticBrainz row outranks DSP and is another source, so a
+    DSP answer for it would be discarded. It must not be downloaded at all."""
+    tracks = _seed_without_energy(conn, track_factory, ["dsp", "deezer", "acousticbrainz"])
+    dsp = FakeSource("dsp", 40, {})
+    stats = enrich_tracks(conn, Resolver([dsp]), tracks, retry_energy=True)
+
+    assert dsp.calls == [tracks[0].spotify_id]
+    assert stats.skipped_unfillable == 2
+
+
+def test_a_row_is_still_retried_when_an_enabled_source_outranks_it(conn, track_factory):
+    """Not over-pruned: in an ordinary run Deezer is registered, so its rank is
+    known and GetSongBPM, which outranks it, can replace the row."""
+    tracks = _seed_without_energy(conn, track_factory, ["deezer"])
+    gsb = FakeSource("getsongbpm", 20, {})
+    deezer = FakeSource("deezer", 30, {})
+    stats = enrich_tracks(conn, Resolver([gsb, deezer]), tracks, retry_energy=True)
+
+    assert tracks[0].spotify_id in gsb.calls
+    assert stats.skipped_unfillable == 0
+
+
+def test_a_row_whose_source_is_off_is_skipped_like_the_write_path_would(conn, track_factory):
+    """With the row's own source disabled its rank is unknown, and the write
+    path fails closed on an unknown rank — so even an answer from a higher
+    source would be refused. Downloading for it would be waste."""
+    tracks = _seed_without_energy(conn, track_factory, ["deezer"])
+    gsb = FakeSource("getsongbpm", 20, {})
+    stats = enrich_tracks(conn, Resolver([gsb]), tracks, retry_energy=True)
+
+    assert gsb.calls == []
+    assert stats.skipped_unfillable == 1

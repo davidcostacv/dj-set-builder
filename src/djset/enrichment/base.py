@@ -165,6 +165,36 @@ def merged_with_key(
     )
 
 
+def merged_with_energy(
+    existing: AudioFeatures | None, candidate: AudioFeatures
+) -> AudioFeatures | None:
+    """``existing`` with ``candidate``'s energy filled in, or None if not applicable.
+
+    The key merge's twin, with one extra condition: the candidate must come from
+    the *same source* as the row. Energy has no universal unit, and
+    `comparable_energy` ranks it within whichever source the row names — so a
+    DSP energy written into an AcousticBrainz row would be ranked against 1,370
+    AcousticBrainz readings on a different scale and read as a spike or a
+    collapse that never happened. Same-source still covers the case this exists
+    for: thousands of DSP rows analysed before the analyser measured energy,
+    which a fresh DSP pass could never fill because a result from the same
+    source does not outrank the row it would replace.
+
+    Like the key merge, this only ever fills a NULL and never touches tempo,
+    key, or a hand-typed row.
+    """
+    if existing is None or candidate.energy is None:
+        return None
+    if existing.energy is not None:
+        return None                      # nothing to fill; never a replacement
+    if existing.source == MANUAL_SOURCE:
+        return None                      # a hand-typed row is not amended
+    if existing.source != candidate.source:
+        return None                      # another source's scale; see above
+
+    return replace(existing, energy=candidate.energy, fetched_at=None)
+
+
 def set_manual_features(
     conn: sqlite3.Connection,
     spotify_id: str,

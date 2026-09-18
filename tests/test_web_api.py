@@ -589,3 +589,22 @@ def test_an_explicit_count_carries_nothing(client):
         "sources": ["pl-a"], "target_kind": "tracks", "target_value": 2}).json()
     assert body["appended"] == 0
     assert all(not r["carried"] for r in body["tracks"])
+
+
+def test_the_arc_default_is_the_same_on_every_surface():
+    """The engine, the API and the form each spell the default. They drifted
+    once for tolerance; a set built from the CLI and one built from the page
+    must not come out shaped differently."""
+    from pathlib import Path
+
+    from djset.sequencing import SequenceOptions
+    from djset.web.app import GenerateIn
+
+    html = (Path(__file__).parents[1] / "src/djset/web/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    tag = next(line for line in html.splitlines() if 'id="energy-arc"' in line)
+
+    assert SequenceOptions().energy_arc is True
+    assert GenerateIn().energy_arc is SequenceOptions().energy_arc
+    assert (" checked" in tag) is SequenceOptions().energy_arc

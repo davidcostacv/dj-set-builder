@@ -156,9 +156,9 @@ class GenerateIn(SelectionIn):
     tolerance: float = Field(DEFAULT_TOLERANCE, ge=MIN_TOLERANCE, le=MAX_TOLERANCE)
     half_double: bool = True
     energy_boost: bool = False
-    # Shape the set as a climb, the way Mixed In Key tells DJs to: one energy
-    # level at a time, never skipping one.
-    energy_arc: bool = False
+    # Shape the set as a climb from quiet to loud, the way Mixed In Key tells
+    # DJs to. Same default as the engine: see SequenceOptions.energy_arc.
+    energy_arc: bool = True
     target_kind: Literal["tracks", "minutes", "all"] = "tracks"
     target_value: int = Field(20, ge=1, le=10_000)
     start_track_id: str | None = None

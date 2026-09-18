@@ -131,8 +131,9 @@ class SequenceOptions:
     half_double: bool = True
     energy_boost: bool = False
     # Shape the set as a climb rather than only a legal path, the way Mixed In
-    # Key tells DJs to build one. Measured at 88% energy coverage over the
-    # user's playlists (Spearman rho of position against energy):
+    # Key tells DJs to build one. On by default since it never measurably hurt
+    # a set and doubled the climb of a fixed-length one. Measured at 88% energy
+    # coverage over the user's playlists (Spearman rho of position/energy):
     #   20-track sets    +0.22 -> +0.51, opening 0.41 -> 0.27, close 0.59 -> 0.73
     #   whole selection  -0.02 -> +0.07
     # at a cost of ~0.1 BPM of mean jump and no extra key clashes. The gap is
@@ -140,7 +141,7 @@ class SequenceOptions:
     # `_place_remaining` stitches the rest by legality, where there is little
     # freedom left to shape. Scoring the stitching on the ramp too bought only
     # +0.04 more for a visibly rougher mix, so it was not kept.
-    energy_arc: bool = False
+    energy_arc: bool = True
     target_tracks: int | None = None
     target_minutes: float | None = None
     # Reorder everything that is eligible, rather than picking a fixed count.

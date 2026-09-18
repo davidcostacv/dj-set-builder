@@ -152,3 +152,38 @@ def test_no_energy_anywhere_is_a_no_op():
 
 def test_empty_input():
     assert comparable_energy({}) == {}
+
+
+# ---------------------------------------------------------------------------
+# ranked over the pool, not over whatever dict was passed in
+# ---------------------------------------------------------------------------
+
+
+def _pool(n=12):
+    """A playlist that is loud by the library's standards: 0.60-0.95 raw."""
+    tracks = [
+        Track(spotify_id=f"p{i}", uri=f"spotify:track:p{i}", title=f"p{i}", artist="A")
+        for i in range(n)
+    ]
+    feats = {
+        f"p{i}": F(f"p{i}", 0.60 + 0.35 * i / (n - 1), bpm=124.0 + (i % 3))
+        for i in range(n)
+    }
+    return tracks, feats
+
+
+def test_the_rest_of_the_library_does_not_move_a_set():
+    """Regression: the web app passes every feature row it holds, and energy
+    was ranked against all of them. A loud playlist then sat at the top of the
+    library's scale, and the arc's quiet-to-loud ramp called almost every
+    track too loud for the first two thirds of the night. The order of a set
+    must depend on the tracks in it, not on what else is in the library."""
+    tracks, pool_only = _pool()
+    library = dict(pool_only)
+    library.update({f"q{i}": F(f"q{i}", i / 100) for i in range(200)})  # quiet
+    opts = SequenceOptions(mode=SequenceMode.BPM_KEY, use_all=True, energy_arc=True)
+
+    alone = [t.spotify_id for t in build_set(tracks, pool_only, opts).tracks]
+    in_library = [t.spotify_id for t in build_set(tracks, library, opts).tracks]
+
+    assert in_library == alone

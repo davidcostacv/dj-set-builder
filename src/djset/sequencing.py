@@ -131,9 +131,15 @@ class SequenceOptions:
     half_double: bool = True
     energy_boost: bool = False
     # Shape the set as a climb rather than only a legal path, the way Mixed In
-    # Key tells DJs to build one. Off by default: on this library only 41% of
-    # tracks carry an energy reading, and measured against real playlists the
-    # arc helped one and hurt another, so it is offered rather than imposed.
+    # Key tells DJs to build one. Measured at 88% energy coverage over the
+    # user's playlists (Spearman rho of position against energy):
+    #   20-track sets    +0.22 -> +0.51, opening 0.41 -> 0.27, close 0.59 -> 0.73
+    #   whole selection  -0.02 -> +0.07
+    # at a cost of ~0.1 BPM of mean jump and no extra key clashes. The gap is
+    # structural: in "whole selection" the search plans about 29% of the set and
+    # `_place_remaining` stitches the rest by legality, where there is little
+    # freedom left to shape. Scoring the stitching on the ramp too bought only
+    # +0.04 more for a visibly rougher mix, so it was not kept.
     energy_arc: bool = False
     target_tracks: int | None = None
     target_minutes: float | None = None
@@ -507,7 +513,13 @@ def build_set(
     # own Spotify id — so per-id uniqueness is not enough to stop a set playing
     # the same song twice.
     tracks = dedupe_recordings(tracks, features)
-    features = comparable_energy(features)
+    # Rank energy over this pool, not over whatever dict was passed in. The web
+    # app passes the whole library, and ranking against that put a house
+    # playlist's mean at the 65th percentile: the arc's 0-to-1 ramp then
+    # called nearly every track too loud for the first two thirds of the set.
+    features = comparable_energy(
+        {t.spotify_id: features[t.spotify_id] for t in tracks if t.spotify_id in features}
+    )
     graph = TrackGraph(tracks, features, opts)
     target = _target_length(graph, opts)
 

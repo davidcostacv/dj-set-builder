@@ -13,6 +13,7 @@ filter, applied upstream in :mod:`djset.filtering`.
 from __future__ import annotations
 
 import bisect
+from collections import deque
 from dataclasses import dataclass, field, replace
 from enum import Enum
 
@@ -26,14 +27,16 @@ from .models import AudioFeatures, Track
 # compatibility predicates
 # ---------------------------------------------------------------------------
 
-# Measured on this library: a sweep of 0.02-0.12 over 172 real playlists in
-# "whole selection" mode. Tightening does not make a set smoother, because the
-# joins that hurt are not the legal ones - they are the forced seams where the
-# search runs out of legal moves and stitches the leftovers on. At 0.03 a third
-# of all joins were forced (vs a fifth at 0.06) and the share over 10 BPM went
-# UP. 0.06 had the lowest mean jump, the fewest joins over 10 BPM and near the
-# fewest over 6. Judge any change by all joins, never by `Transition.bpm_ratio`:
-# it is None on every forced seam, so it only ever sees the joins that fit.
+# Measured on this library: sweeps over 172 real playlists in "whole
+# selection" mode, first with the old stitching and again with `_cover_all`.
+# Tightening does not make a set smoother, because the joins that hurt are the
+# forced seams, and a tighter rule forces more of them. With `_cover_all`,
+# 0.06 had the lowest mean jump (3.27 BPM) and was near the best on every other
+# count; 0.08 traded fewer key clashes for more joins over 6 BPM. Judge any
+# change by the real BPM and key of every join. The share of joins "forced" is
+# no yardstick across tolerances — a 7% jump is legal at 0.08 and forced at
+# 0.06 — and `Transition.bpm_ratio` is None on every forced seam, so it only
+# ever sees the joins that fit.
 DEFAULT_TOLERANCE = 0.06
 MIN_TOLERANCE = 0.02
 
@@ -135,12 +138,8 @@ class SequenceOptions:
     # a set and doubled the climb of a fixed-length one. Measured at 88% energy
     # coverage over the user's playlists (Spearman rho of position/energy):
     #   20-track sets    +0.22 -> +0.51, opening 0.41 -> 0.27, close 0.59 -> 0.73
-    #   whole selection  -0.02 -> +0.07
-    # at a cost of ~0.1 BPM of mean jump and no extra key clashes. The gap is
-    # structural: in "whole selection" the search plans about 29% of the set and
-    # `_place_remaining` stitches the rest by legality, where there is little
-    # freedom left to shape. Scoring the stitching on the ramp too bought only
-    # +0.04 more for a visibly rougher mix, so it was not kept.
+    #   whole selection  +0.01 -> +0.17 (see `_ARC_CHAIN_WEIGHT`)
+    # at a cost of ~0.1 BPM of mean jump and no extra key clashes.
     energy_arc: bool = True
     target_tracks: int | None = None
     target_minutes: float | None = None
@@ -538,6 +537,74 @@ def build_set(
         )
         return result
 
+    if opts.use_all:
+        # "Reorder everything" means every track gets a place, so the job is
+        # an order through all of them with as few forced seams as possible —
+        # a different problem from picking the best N, and solved differently.
+        # Forced seams are counted and shown, never hidden.
+        path, result.compromises = _cover_all(graph, opts)
+    else:
+        found = _beam_path(graph, opts, target)
+        if found is None:
+            return result
+        path = found
+
+    result.tracks = [graph.tracks[i] for i in path]
+    result.transitions = [
+        transition(graph.feat[a], graph.feat[b], opts) or Transition(None, None, None, 0.0)
+        for a, b in zip(path, path[1:])
+    ]
+
+    if opts.use_all:
+        # Asking for the whole selection means the whole selection. A track
+        # with no BPM or key cannot be *mixed* into an order, but dropping it
+        # loses it from the playlist entirely — which reads as the app quietly
+        # eating songs. Carry them at the end instead, where they are visibly
+        # unsequenced rather than invisibly gone.
+        #
+        # Only here: an explicit "20 tracks" is a request to choose 20, and
+        # nothing is being dropped when the rest were never asked for.
+        placed = {t.spotify_id for t in result.tracks}
+        leftovers = [t for t in tracks if t.spotify_id not in placed]
+        result.tracks.extend(leftovers)
+        result.appended = len(leftovers)
+
+    if not result.reached_target:
+        result.limiting_factor = _diagnose(
+            graph, opts, eligible_before_filter, len(tracks)
+        )
+    return result
+
+
+def _soft_distance(a: AudioFeatures, b: AudioFeatures) -> float:
+    """How bad a transition is when the strict predicates already failed.
+
+    Used only in "reorder everything" mode, to put each forced seam where it
+    is gentlest.
+    """
+    cost = 0.0
+    if a.bpm and b.bpm:
+        cost += min(bpm_ratio(a.bpm, b.bpm), bpm_ratio(a.bpm, b.bpm * 2),
+                    bpm_ratio(a.bpm, b.bpm / 2)) * 10.0
+    else:
+        cost += 5.0
+    if a.key_camelot and b.key_camelot:
+        try:
+            an, al = parse_camelot(a.key_camelot)
+            bn, bl = parse_camelot(b.key_camelot)
+            steps = min((bn - an) % 12, (an - bn) % 12)
+            cost += steps + (0 if al == bl else 1)
+        except ValueError:
+            cost += 6.0
+    else:
+        cost += 3.0
+    return cost
+
+
+def _beam_path(
+    graph: TrackGraph, opts: SequenceOptions, target: int
+) -> list[int] | None:
+    """The longest high-quality legal path the beam search finds, up to ``target``."""
     starts = _starting_points(graph, opts)
     best: _Beam | None = None
 
@@ -602,99 +669,348 @@ def build_set(
             break
 
     if best is None:
-        return result
+        return None
 
-    path = best.path[:target]
-
-    if opts.use_all and len(path) < len(graph):
-        # "Reorder everything" means every track gets a place. The strict
-        # predicates rarely admit a single path through hundreds of tracks, so
-        # the leftovers are appended at the least-bad seam available. Those
-        # seams are counted and shown, never hidden — that is the difference
-        # between an honest compromise and silent padding.
-        path, result.compromises = _place_remaining(graph, path, opts)
-
-    result.tracks = [graph.tracks[i] for i in path]
-    result.transitions = [
-        transition(graph.feat[a], graph.feat[b], opts) or Transition(None, None, None, 0.0)
-        for a, b in zip(path, path[1:])
-    ]
-
-    if opts.use_all:
-        # Asking for the whole selection means the whole selection. A track
-        # with no BPM or key cannot be *mixed* into an order, but dropping it
-        # loses it from the playlist entirely — which reads as the app quietly
-        # eating songs. Carry them at the end instead, where they are visibly
-        # unsequenced rather than invisibly gone.
-        #
-        # Only here: an explicit "20 tracks" is a request to choose 20, and
-        # nothing is being dropped when the rest were never asked for.
-        placed = {t.spotify_id for t in result.tracks}
-        leftovers = [t for t in tracks if t.spotify_id not in placed]
-        result.tracks.extend(leftovers)
-        result.appended = len(leftovers)
-
-    if not result.reached_target:
-        result.limiting_factor = _diagnose(
-            graph, opts, eligible_before_filter, len(tracks)
-        )
-    return result
+    return best.path[:target]
 
 
-def _soft_distance(a: AudioFeatures, b: AudioFeatures) -> float:
-    """How bad a transition is when the strict predicates already failed.
+# How strongly the arc pulls when the pieces of a whole selection are chained.
+# One unit of `_soft_distance` is a Camelot step or 10% of tempo; missing the
+# ramp by the full pool costs this many. Measured on 172 real playlists, 3 was
+# the most climb available without more key clashes than the old stitching.
+_ARC_CHAIN_WEIGHT = 3.0
 
-    Used only to order the leftovers in "reorder everything" mode, so that a
-    forced seam is at least the gentlest one available.
+
+def _cover_all(graph: TrackGraph, opts: SequenceOptions) -> tuple[list[int], int]:
+    """Order every track with as few forced seams as possible.
+
+    The beam search looks for one long path and was never meant to place
+    everything: in "whole selection" it planned about 29% of a set, and
+    appending the rest one track at a time forced 20% of all joins. Measured
+    on 172 real playlists the unavoidable share is about 10% — mostly tracks
+    that no legal chain connects, so a forced seam is the only way between
+    them — which left half of those seams avoidable.
+
+    So the order is built from the joins outward instead of from one end:
+
+    1. Every track is given a successor so that as many joins as possible are
+       legal — a maximum matching between "plays before" and "plays after",
+       seeded best-quality first so the joins it keeps are the good ones.
+       That gives paths, plus closed loops a set cannot play.
+    2. Each loop is spliced into a path wherever that costs no legal join, and
+       otherwise opened at its weakest join.
+    3. The pieces are chained. A maximum matching leaves no legal join from
+       one piece's end to another's start, so each link is a forced seam, put
+       at the gentlest place available and, with the arc on, in climbing
+       order of energy.
+    4. A repair pass reverses any stretch whose reversal turns a forced seam
+       legal without forcing another.
+
+    Measured against the old stitching: forced seams 20.3% -> 13.6%, mean
+    jump 3.61 -> 3.33 BPM, joins over 10 BPM 9.3% -> 7.0%, key clashes no
+    higher, and with the arc on the set climbs about twice as much.
     """
-    cost = 0.0
-    if a.bpm and b.bpm:
-        cost += min(bpm_ratio(a.bpm, b.bpm), bpm_ratio(a.bpm, b.bpm * 2),
-                    bpm_ratio(a.bpm, b.bpm / 2)) * 10.0
-    else:
-        cost += 5.0
-    if a.key_camelot and b.key_camelot:
-        try:
-            an, al = parse_camelot(a.key_camelot)
-            bn, bl = parse_camelot(b.key_camelot)
-            steps = min((bn - an) % 12, (an - bn) % 12)
-            cost += steps + (0 if al == bl else 1)
-        except ValueError:
-            cost += 6.0
-    else:
-        cost += 3.0
-    return cost
+    n = len(graph)
+    if n == 0:
+        return [], 0
+
+    out_adj: list[list[int]] = [[] for _ in range(n)]
+    quality: dict[tuple[int, int], float] = {}
+    for i in range(n):
+        for j, tr in graph.neighbours(i):  # best first
+            if not graph.same_song(i, j):
+                out_adj[i].append(j)
+                quality[(i, j)] = tr.quality
+    legal = [set(a) for a in out_adj]
+    in_adj: list[list[int]] = [[] for _ in range(n)]
+    for i in range(n):
+        for j in out_adj[i]:
+            in_adj[j].append(i)
+
+    succ, pred = _max_successor_matching(n, out_adj, quality)
+    _patch_loops(n, succ, pred, legal, out_adj, in_adj, quality)
+
+    pieces: list[list[int]] = []
+    for s in range(n):
+        if pred[s] == -1:
+            piece, x = [], s
+            while x != -1:
+                piece.append(x)
+                x = succ[x]
+            pieces.append(piece)
+
+    path = _chain_pieces(graph, opts, pieces, legal)
+    _repair_forced(path, legal, out_adj, in_adj, opts)
+    forced = sum(1 for a, b in zip(path, path[1:]) if b not in legal[a])
+    return path, forced
 
 
-def _place_remaining(
-    graph: TrackGraph, path: list[int], opts: SequenceOptions
-) -> tuple[list[int], int]:
-    """Append every unplaced track, preferring valid moves over forced ones."""
-    placed = set(path)
-    remaining = [i for i in range(len(graph)) if i not in placed]
-    out = list(path)
-    compromises = 0
+def _max_successor_matching(
+    n: int, out_adj: list[list[int]], quality: dict[tuple[int, int], float]
+) -> tuple[list[int], list[int]]:
+    """Give as many tracks as possible a legal successor (Hopcroft-Karp).
 
-    while remaining:
-        tail = out[-1]
-        left = set(remaining)
-        # A legal continuation is always better than a forced one, and a
-        # different song is better than either — an original followed by its
-        # own remix is the same song twice.
-        legal = [(j, tr) for j, tr in graph.neighbours(tail) if j in left]
-        fresh = [(j, tr) for j, tr in legal if not graph.same_song(tail, j)]
-        if fresh:
-            j = max(fresh, key=lambda p: p[1].quality)[0]
-        elif legal:
-            j = max(legal, key=lambda p: p[1].quality)[0]
+    Seeded greedily by quality, refusing any join that would close a loop:
+    compatibility is symmetric, so an unguarded greedy pairs A->B with B->A
+    and fills the matching with two-track loops no set can play.
+    """
+    succ = [-1] * n
+    pred = [-1] * n
+    root = list(range(n))
+
+    def find(x: int) -> int:
+        while root[x] != x:
+            root[x] = root[root[x]]
+            x = root[x]
+        return x
+
+    # Best quality first; on a tie, the playlist's own order, so that when
+    # nothing else decides, the set keeps the order it was given.
+    for _q, i, j in sorted((-q, i, j) for (i, j), q in quality.items()):
+        if succ[i] == -1 and pred[j] == -1 and find(i) != find(j):
+            succ[i], pred[j] = j, i
+            root[find(i)] = find(j)
+
+    unreached = n + 1
+    layer = [0] * n
+
+    def layered() -> bool:
+        queue: deque[int] = deque()
+        for u in range(n):
+            if succ[u] == -1:
+                layer[u] = 0
+                queue.append(u)
+            else:
+                layer[u] = unreached
+        found = False
+        while queue:
+            u = queue.popleft()
+            for v in out_adj[u]:
+                w = pred[v]
+                if w == -1:
+                    found = True
+                elif layer[w] == unreached:
+                    layer[w] = layer[u] + 1
+                    queue.append(w)
+        return found
+
+    def augment(u: int) -> None:
+        # Iterative: a recursive search overflows the stack on large pools.
+        stack = [(u, iter(out_adj[u]))]
+        trail: list[tuple[int, int]] = []
+        while stack:
+            x, options = stack[-1]
+            for v in options:
+                w = pred[v]
+                if w == -1:
+                    trail.append((x, v))
+                    for a, b in trail:
+                        succ[a], pred[b] = b, a
+                    return
+                if layer[w] == layer[x] + 1:
+                    trail.append((x, v))
+                    stack.append((w, iter(out_adj[w])))
+                    break
+            else:
+                layer[x] = unreached
+                stack.pop()
+                if trail:
+                    trail.pop()
+
+    while layered():
+        for u in range(n):
+            if succ[u] == -1:
+                augment(u)
+    return succ, pred
+
+
+def _patch_loops(
+    n: int,
+    succ: list[int],
+    pred: list[int],
+    legal: list[set[int]],
+    out_adj: list[list[int]],
+    in_adj: list[list[int]],
+    quality: dict[tuple[int, int], float],
+) -> None:
+    """Open every closed loop, into a path where one will take it cleanly."""
+    on_path = [False] * n
+    for s in range(n):
+        if pred[s] == -1:
+            x = s
+            while x != -1:
+                on_path[x] = True
+                x = succ[x]
+    loops: list[list[int]] = []
+    seen = on_path[:]
+    for s in range(n):
+        if not seen[s]:
+            loop, x = [], s
+            while not seen[x]:
+                seen[x] = True
+                loop.append(x)
+                x = succ[x]
+            loops.append(loop)
+
+    def q(a: int, b: int) -> float:
+        return quality.get((a, b), 0.0)
+
+    for loop in loops:
+        # (gain, how, a, b, x, y): drop a->b from the loop and hang it on x/y.
+        best: tuple[float, str, int, int, int, int] | None = None
+        for a in loop:
+            b = succ[a]
+            for x in in_adj[b]:
+                if not on_path[x]:
+                    continue
+                y = succ[x]
+                if y == -1:  # after a path's last track
+                    gain = q(x, b) - q(a, b)
+                    if best is None or gain > best[0]:
+                        best = (gain, "end", a, b, x, -1)
+                elif y in legal[a]:  # between two tracks of a path
+                    gain = q(x, b) + q(a, y) - q(a, b) - q(x, y)
+                    if best is None or gain > best[0]:
+                        best = (gain, "inside", a, b, x, y)
+            for y in out_adj[a]:
+                if on_path[y] and pred[y] == -1:  # before a path's first track
+                    gain = q(a, y) - q(a, b)
+                    if best is None or gain > best[0]:
+                        best = (gain, "start", a, b, -1, y)
+        if best is None:
+            a = min(loop, key=lambda a: q(a, succ[a]))
+            b = succ[a]
+            succ[a] = -1
+            pred[b] = -1
         else:
-            others = [k for k in remaining if not graph.same_song(tail, k)] or remaining
-            j = min(others, key=lambda k: _soft_distance(graph.feat[tail], graph.feat[k]))
-            compromises += 1
-        out.append(j)
-        remaining.remove(j)
+            _gain, how, a, b, x, y = best
+            if how == "end":
+                succ[a] = -1
+                succ[x], pred[b] = b, x
+            elif how == "start":
+                pred[b] = -1
+                succ[a], pred[y] = y, a
+            else:
+                succ[x], pred[b] = b, x
+                succ[a], pred[y] = y, a
+        for x in loop:
+            on_path[x] = True
 
-    return out, compromises
+
+def _chain_pieces(
+    graph: TrackGraph,
+    opts: SequenceOptions,
+    pieces: list[list[int]],
+    legal: list[set[int]],
+) -> list[int]:
+    """Link the pieces into one order, gentlest forced seam first."""
+    n = len(graph)
+
+    def energy_of(piece: list[int]) -> float:
+        known = [graph.feat[i].energy for i in piece if graph.feat[i].energy is not None]
+        return sum(known) / len(known) if known else 0.5
+
+    def reversible(piece: list[int]) -> bool:
+        # Compatibility is symmetric except the one-way +7 energy boost.
+        return all(piece[k] in legal[piece[k + 1]] for k in range(len(piece) - 1))
+
+    first: list[int] | None = None
+    if opts.start_track_id:
+        start = next(
+            (i for i, t in enumerate(graph.tracks) if t.spotify_id == opts.start_track_id),
+            None,
+        )
+        if start is not None:
+            k = next(k for k, p in enumerate(pieces) if start in p)
+            at = pieces[k].index(start)
+            first = pieces[k][at:]
+            pieces[k:k + 1] = [pieces[k][:at]] if at else []
+
+    if opts.energy_arc:
+        for k, piece in enumerate(pieces):
+            known = [graph.feat[i].energy for i in piece if graph.feat[i].energy is not None]
+            if len(known) >= 2 and known[-1] < known[0] and reversible(piece):
+                pieces[k] = piece[::-1]
+        if first is None and pieces:
+            first = min(pieces, key=lambda p: (energy_of(p), -len(p)))
+            pieces.remove(first)
+    elif first is None and pieces:
+        first = max(pieces, key=len)
+        pieces.remove(first)
+
+    order = list(first or [])
+    while pieces:
+        tail = graph.feat[order[-1]]
+        best: tuple[float, int, list[int]] | None = None
+        for k, piece in enumerate(pieces):
+            for option in (piece, piece[::-1]) if not opts.energy_arc and reversible(piece) else (piece,):
+                cost = _soft_distance(tail, graph.feat[option[0]])
+                if opts.energy_arc:
+                    target = (len(order) + len(option) / 2) / n
+                    cost += _ARC_CHAIN_WEIGHT * abs(energy_of(option) - target)
+                if best is None or cost < best[0]:
+                    best = (cost, k, option)
+        assert best is not None
+        order.extend(best[2])
+        pieces.pop(best[1])
+    return order
+
+
+def _repair_forced(
+    path: list[int],
+    legal: list[set[int]],
+    out_adj: list[list[int]],
+    in_adj: list[list[int]],
+    opts: SequenceOptions,
+) -> None:
+    """Reverse any stretch that turns a forced seam legal without forcing another."""
+    size = len(path)
+    pos = [0] * size
+    for k, x in enumerate(path):
+        pos[x] = k
+
+    def forced(a: int, b: int | None) -> bool:
+        return b is not None and b not in legal[a]
+
+    def reversible(i: int, j: int) -> bool:
+        if not opts.energy_boost:
+            return True
+        return all(path[k] in legal[path[k + 1]] for k in range(i, j))
+
+    def reverse(i: int, j: int) -> None:
+        path[i:j + 1] = path[i:j + 1][::-1]
+        for k in range(i, j + 1):
+            pos[path[k]] = k
+
+    for _round in range(20):
+        changed = False
+        for i in range(size - 1):
+            a, b = path[i], path[i + 1]
+            if not forced(a, b):
+                continue
+            # a partner later on: reverse b..c so a meets c and b meets d
+            for c in out_adj[a]:
+                j = pos[c]
+                if j <= i + 1:
+                    continue
+                d = path[j + 1] if j + 1 < size else None
+                if 1 + forced(c, d) > forced(b, d) and reversible(i + 1, j):
+                    reverse(i + 1, j)
+                    changed = True
+                    break
+            else:
+                # a partner earlier on: reverse e..a so c meets a and e meets b
+                for c in in_adj[a]:
+                    j = pos[c]
+                    if j >= i:
+                        continue
+                    e = path[j + 1]
+                    if 1 + forced(c, e) > forced(e, b) and reversible(j + 1, i):
+                        reverse(j + 1, i)
+                        changed = True
+                        break
+        if not changed:
+            return
 
 
 def _target_length(graph: TrackGraph, opts: SequenceOptions) -> int:

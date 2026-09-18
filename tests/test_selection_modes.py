@@ -154,7 +154,10 @@ def test_use_all_carries_tracks_it_cannot_sequence_at_the_end():
     assert len(res.tracks) == 5
     assert res.tracks[-1].spotify_id == "t2"      # carried, at the end
     assert res.appended == 1
-    assert [t.spotify_id for t in res.sequenced] == ["t0", "t1", "t3", "t4"]
+    # The four mixable tracks, in a legal order. Which way round is not the
+    # point here: with no energy to decide, 120->122 and 122->120 mix alike.
+    assert {t.spotify_id for t in res.sequenced} == {"t0", "t1", "t3", "t4"}
+    assert res.compromises == 0
 
 
 def test_the_carried_tracks_are_not_counted_as_mixed():
@@ -260,3 +263,46 @@ def test_a_subset_smaller_than_the_target_reports_honestly():
     assert len(res.tracks) == 3
     assert not res.reached_target
     assert "3 of 10" in res.explain()
+
+
+# ---------------------------------------------------------------------------
+# whole selection: an order through everything, with as few forced seams
+# ---------------------------------------------------------------------------
+
+
+def _key_line(n: int):
+    """n tracks that only chain one way: 1A-2A-3A-... at one tempo, each code
+    mixing with its two neighbours on the wheel and nothing else."""
+    tracks = [T(f"k{i}", title=f"Line {i}", artist=f"Artist {i}") for i in range(n)]
+    feats = {f"k{i}": F(f"k{i}", 128.0, f"{i + 1}A") for i in range(n)}
+    return tracks, feats
+
+
+def test_whole_selection_finds_the_order_that_forces_nothing():
+    """Regression, found by comparing the two engines on random pools: the old
+    way grew one path from a well-connected track and appended what was left,
+    which here meant one forced seam. An order with none exists:
+    3A 124 -> 4A 128 -> 4A 132 -> 4A 132 -> 5A 128 -> 4A 128 -> 4B 124."""
+    rows = {
+        "t0": (128.0, "5A"), "t1": (132.0, "4A"), "t2": (124.0, "4B"),
+        "t3": (128.0, "4A"), "t4": (124.0, "3A"), "t5": (128.0, "4A"),
+        "t6": (132.0, "4A"),
+    }
+    tracks = [T(k, title=f"Song {k}", artist=f"Artist {k}") for k in rows]
+    feats = {k: F(k, bpm, key) for k, (bpm, key) in rows.items()}
+
+    res = build_set(tracks, feats, SequenceOptions(use_all=True, energy_arc=False))
+
+    assert len(res.sequenced) == 7
+    assert res.compromises == 0
+
+
+def test_whole_selection_starts_where_it_is_asked_to():
+    """"Another order (v2)" asks for a different first track. Honouring it
+    may cost a forced seam; ignoring it hands back the same set."""
+    tracks, feats = _key_line(10)
+
+    res = build_set(tracks, feats, SequenceOptions(use_all=True, start_track_id="k6"))
+
+    assert res.sequenced[0].spotify_id == "k6"
+    assert {t.spotify_id for t in res.sequenced} == {f"k{i}" for i in range(10)}

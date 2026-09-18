@@ -159,7 +159,9 @@ class GenerateIn(SelectionIn):
     # Shape the set as a climb from quiet to loud, the way Mixed In Key tells
     # DJs to. Same default as the engine: see SequenceOptions.energy_arc.
     energy_arc: bool = True
-    target_kind: Literal["tracks", "minutes", "all"] = "tracks"
+    # The whole selection unless told otherwise: a set drawn from a playlist
+    # keeps every one of its tracks. Same default as the form.
+    target_kind: Literal["tracks", "minutes", "all"] = "all"
     target_value: int = Field(20, ge=1, le=10_000)
     start_track_id: str | None = None
 

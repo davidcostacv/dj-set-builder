@@ -237,6 +237,10 @@ class MainWindow(QMainWindow):
         self.energy_boost = QCheckBox("Allow energy-boost transitions (+7)")
         lay.addWidget(self.energy_boost)
 
+        self.energy_arc = QCheckBox("Build energy arc (start quiet, finish loud)")
+        self.energy_arc.setChecked(SequenceOptions().energy_arc)
+        lay.addWidget(self.energy_arc)
+
         lay.addSpacing(8)
         row = QHBoxLayout()
         self.target_kind = QComboBox()
@@ -247,6 +251,13 @@ class MainWindow(QMainWindow):
         self.target_value = QSpinBox()
         self.target_value.setRange(2, 500)
         self.target_value.setValue(24)
+        # Whole selection by default, like the web form: a set drawn from a
+        # playlist keeps every one of its tracks. Signals held back because
+        # the handler reaches widgets that are not built yet.
+        self.target_kind.blockSignals(True)
+        self.target_kind.setCurrentText("whole selection")
+        self.target_kind.blockSignals(False)
+        self.target_value.setEnabled(False)
         row.addWidget(QLabel("Target"))
         row.addWidget(self.target_value)
         row.addWidget(self.target_kind)
@@ -648,6 +659,7 @@ class MainWindow(QMainWindow):
             tolerance=self.tolerance.value(),
             half_double=self.half_double.isChecked(),
             energy_boost=self.energy_boost.isChecked(),
+            energy_arc=self.energy_arc.isChecked(),
             use_all=kind == "whole selection",
             target_tracks=self.target_value.value() if kind == "tracks" else None,
             target_minutes=float(self.target_value.value()) if kind == "minutes" else None,

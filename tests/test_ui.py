@@ -577,3 +577,10 @@ def test_a_track_in_two_selected_playlists_appears_once(window, qapp):
     ids = [t.spotify_id for t in window._pool()]
     assert sorted(ids) == ["t0", "t1", "t2"]
     assert len(ids) == len(set(ids))
+
+
+def test_the_window_starts_on_the_whole_selection_with_the_arc_on(window):
+    """Same defaults as the web form: every track of the playlist, climbing."""
+    assert window.target_kind.currentText() == "whole selection"
+    assert not window.target_value.isEnabled()
+    assert window.energy_arc.isChecked() is SequenceOptions().energy_arc

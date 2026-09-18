@@ -231,7 +231,7 @@ def test_targets_inside_the_range_are_accepted(client, value):
 
 def test_a_short_set_explains_itself_rather_than_failing(client):
     body = client.post(
-        "/api/generate", json={"sources": ["pl-a"], "target_value": 500}
+        "/api/generate", json={"sources": ["pl-a"], "target_kind": "tracks", "target_value": 500}
     ).json()
     assert body["reached_target"] is False
     assert body["explain"]
@@ -293,7 +293,7 @@ def test_asking_for_more_than_the_ceiling_still_refuses_to_pad(client):
     """The engine's honesty is a designed property and stays. What changed is
     that the UI now says the ceiling first, and offers 'whole selection'."""
     body = client.post(
-        "/api/generate", json={"sources": ["pl-a"], "target_value": 500}
+        "/api/generate", json={"sources": ["pl-a"], "target_kind": "tracks", "target_value": 500}
     ).json()
     assert body["reached_target"] is False
     assert body["count"] < 500
@@ -608,3 +608,11 @@ def test_the_arc_default_is_the_same_on_every_surface():
     assert SequenceOptions().energy_arc is True
     assert GenerateIn().energy_arc is SequenceOptions().energy_arc
     assert (" checked" in tag) is SequenceOptions().energy_arc
+
+
+def test_a_selection_is_kept_whole_unless_a_count_is_asked_for(client):
+    """The user's rule: a set drawn from a playlist keeps every one of its
+    tracks. The form sends "all"; a caller that says nothing gets the same."""
+    body = client.post("/api/generate", json={"sources": ["pl-a", "pl-b"]}).json()
+    assert body["count"] == 5
+    assert body["reached_target"] is True

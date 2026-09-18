@@ -258,7 +258,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
             tolerance=args.tolerance,
             half_double=not args.no_half_double,
             energy_boost=args.energy_boost,
-            use_all=args.all,
+            energy_arc=not args.no_energy_arc,
+            # A set drawn from playlists keeps every track unless a count or
+            # a duration asks for a choice — the same default as the web app.
+            use_all=args.all or (args.tracks is None and args.minutes is None),
             target_tracks=args.tracks,
             target_minutes=args.minutes,
             start_track_id=args.start_track,
@@ -663,7 +666,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--minutes", type=float, help="target duration instead of a count")
     sp.add_argument(
         "--all", action="store_true",
-        help="reorder EVERY eligible track instead of picking a count",
+        help="reorder EVERY eligible track (the default when neither --tracks "
+        "nor --minutes is given)",
     )
     sp.add_argument(
         "--track", action="append",
@@ -672,6 +676,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--start-track", help="spotify track id to open with")
     sp.add_argument("--no-half-double", action="store_true", help="disable 70<->140 matching")
     sp.add_argument("--energy-boost", action="store_true", help="allow +7 Camelot moves")
+    sp.add_argument(
+        "--no-energy-arc", action="store_true",
+        help="do not shape the set from quiet to loud",
+    )
     sp.add_argument("--name", help="playlist name (defaults to filter + mode + count)")
     sp.add_argument("--public", action="store_true", help="create it public (default private)")
     sp.add_argument("--dry-run", action="store_true", help="sequence only, create nothing")

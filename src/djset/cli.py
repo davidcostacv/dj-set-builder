@@ -502,8 +502,8 @@ def _tolerance(raw: str) -> float:
         raise argparse.ArgumentTypeError(f"{raw!r} is not a number")
     if not 0.0 < value <= 1.0:
         raise argparse.ArgumentTypeError(
-            f"{value} is outside 0-1 — a BPM tolerance is a fraction, so 0.06 "
-            "means 6%"
+            f"{value} is outside 0-1 — a BPM tolerance is a fraction, so 0.03 "
+            "means 3%"
         )
     return value
 
@@ -653,7 +653,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--playlist", action="append", help="source playlist id (repeatable)")
     sp.add_argument("--genre", action="append", help="genre filter (repeatable, OR)")
     sp.add_argument("--mode", choices=["bpm", "key", "bpm+key"], default="bpm+key")
-    sp.add_argument("--tolerance", type=float, default=0.06, help="BPM tolerance 0.02-0.12")
+    sp.add_argument(
+        "--tolerance",
+        type=float,
+        default=DEFAULT_TOLERANCE,
+        help="BPM tolerance 0.02-0.12",
+    )
     sp.add_argument("--tracks", type=int, help="target track count")
     sp.add_argument("--minutes", type=float, help="target duration instead of a count")
     sp.add_argument(

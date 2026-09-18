@@ -55,7 +55,12 @@ from ..filtering import (
     summarize,
 )
 from ..models import LIKED_SONGS_ID, LIKED_SONGS_NAME
-from ..sequencing import SequenceMode, SequenceOptions, build_set
+from ..sequencing import (
+    DEFAULT_TOLERANCE,
+    SequenceMode,
+    SequenceOptions,
+    build_set,
+)
 from ..spotify.auth import SpotifyAuth
 from ..spotify.client import SpotifyClient
 from ..spotify.sync import sync_artists, sync_playlists
@@ -221,7 +226,7 @@ class MainWindow(QMainWindow):
         self.tolerance = QDoubleSpinBox()
         self.tolerance.setRange(0.02, 0.12)
         self.tolerance.setSingleStep(0.01)
-        self.tolerance.setValue(0.06)
+        self.tolerance.setValue(DEFAULT_TOLERANCE)
         self.tolerance.setDecimals(2)
         lay.addWidget(self.tolerance)
 

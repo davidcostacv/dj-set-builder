@@ -17,7 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from djset.models import AudioFeatures, Track  # noqa: E402
-from djset.sequencing import SequenceOptions  # noqa: E402
+from djset.sequencing import DEFAULT_TOLERANCE, SequenceOptions  # noqa: E402
 from djset.ui.result_table import SetTableModel  # noqa: E402
 
 
@@ -195,7 +195,7 @@ def test_default_mode_is_bpm_plus_key(window):
 def test_tolerance_is_bounded_to_the_specified_range(window):
     assert window.tolerance.minimum() == pytest.approx(0.02)
     assert window.tolerance.maximum() == pytest.approx(0.12)
-    assert window.tolerance.value() == pytest.approx(0.06)
+    assert window.tolerance.value() == pytest.approx(DEFAULT_TOLERANCE)
 
 
 def test_playlist_name_is_prefilled_and_editable(window):

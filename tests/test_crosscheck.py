@@ -78,9 +78,9 @@ def test_a_missing_value_is_not_a_disagreement():
 def test_the_two_thresholds_answer_different_questions():
     """"The sources printed different numbers" and "the sequencer will mix
     these wrongly" are separate, and only the second one costs anything."""
-    assert classify_bpm(128.0, 131.0) == COMPATIBLE  # differs, still mixes
-    assert classify_bpm(128.0, 131.0, same_tolerance=0.05) == AGREE
-    assert classify_bpm(128.0, 131.0, mix_tolerance=0.01) == CONFLICT
+    assert classify_bpm(128.0, 132.0) == COMPATIBLE  # differs, still mixes
+    assert classify_bpm(128.0, 132.0, same_tolerance=0.05) == AGREE
+    assert classify_bpm(128.0, 132.0, mix_tolerance=0.01) == CONFLICT
 
 
 # ---------------------------------------------------------------------------

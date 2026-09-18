@@ -26,13 +26,15 @@ from .models import AudioFeatures, Track
 # compatibility predicates
 # ---------------------------------------------------------------------------
 
-# Measured on this library rather than chosen: sweeping 0.02-0.12 over 45 real
-# playlists, every setting mixed the same 99% of the pool, so loosening buys no
-# extra tracks — it only widens the jumps. At 0.06 one join in sixteen moves
-# more than 6 BPM; at 0.12 it is one in three. 0.02 is too tight the other way:
-# asking for 25 tracks, one playlist in fifteen came up short. 0.03 reaches
-# every target with a mean jump near 1 BPM.
-DEFAULT_TOLERANCE = 0.03
+# Measured on this library: a sweep of 0.02-0.12 over 172 real playlists in
+# "whole selection" mode. Tightening does not make a set smoother, because the
+# joins that hurt are not the legal ones - they are the forced seams where the
+# search runs out of legal moves and stitches the leftovers on. At 0.03 a third
+# of all joins were forced (vs a fifth at 0.06) and the share over 10 BPM went
+# UP. 0.06 had the lowest mean jump, the fewest joins over 10 BPM and near the
+# fewest over 6. Judge any change by all joins, never by `Transition.bpm_ratio`:
+# it is None on every forced seam, so it only ever sees the joins that fit.
+DEFAULT_TOLERANCE = 0.06
 MIN_TOLERANCE = 0.02
 
 # How far energy must fall before a transition counts as a dip rather than

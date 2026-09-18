@@ -502,8 +502,8 @@ def _tolerance(raw: str) -> float:
         raise argparse.ArgumentTypeError(f"{raw!r} is not a number")
     if not 0.0 < value <= 1.0:
         raise argparse.ArgumentTypeError(
-            f"{value} is outside 0-1 — a BPM tolerance is a fraction, so 0.03 "
-            "means 3%"
+            f"{value} is outside 0-1 — a BPM tolerance is a fraction, so 0.06 "
+            "means 6%"
         )
     return value
 

@@ -72,8 +72,8 @@ def test_bpm_ratio_uses_the_smaller_value_as_denominator():
 
 def test_within_and_outside_default_tolerance():
     assert bpm_compatible(128, 130)
-    assert bpm_compatible(100, 103)  # exactly 3%
-    assert not bpm_compatible(100, 106)
+    assert bpm_compatible(100, 106)  # exactly 6%
+    assert not bpm_compatible(100, 110)
 
 
 def test_tolerance_is_adjustable():
@@ -135,7 +135,7 @@ def test_missing_data_blocks_only_the_relevant_mode():
 def test_closer_matches_score_higher():
     opts = SequenceOptions(mode=SequenceMode.BPM_KEY)
     tight = transition(F("a", 128, "8A"), F("b", 128, "8A"), opts)
-    loose = transition(F("a", 128, "8A"), F("b", 131, "9A"), opts)
+    loose = transition(F("a", 128, "8A"), F("b", 134, "9A"), opts)
     assert tight.quality > loose.quality
     assert tight.label == "excellent"
 

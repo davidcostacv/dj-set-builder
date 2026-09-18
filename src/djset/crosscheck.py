@@ -64,11 +64,6 @@ def classify_bpm(
     own, so nothing about them was broken. GetSongBPM also reports whole
     numbers while Deezer reports decimals, which manufactures a small
     disagreement on every single track.
-
-    That window narrowed when the sequencer's default tightened from 6% to 3%,
-    and this report will now call some of those a conflict. That is the honest
-    answer rather than a regression: the question asked here is whether the
-    sequencer would mix them wrongly, and at 3% it would.
     """
     if a is None or b is None:
         return None
